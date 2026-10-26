@@ -1,0 +1,217 @@
+# HUMAN.RIG v3
+
+Rig cutter + paint editor + part picker.  
+Turns reference photos (or a GIF) of a character into a fully posed, animatable sprite sheet with pivots, bones, and per-part PNGs.
+
+**Pipeline**
+
+1. **ANALYSE** – MediaPipe skeleton + pixel labels for every body part  
+2. **EDIT** – paint regions, drag joints, force view, disable frames (edits survive re-analysis)  
+3. **CUT** – extract every part for FRONT / SIDE / BACK  
+4. **PICK** – choose the best candidate per part/view (locks survive re-cuts)  
+5. **EXPORT** – `rig.png`, `atlas.png`, `rig.json`, assembled figures, per-part PNGs  
+
+Side-view sprites always face **RIGHT**. In side view: **R = near limb**, **L = far limb**.  
+Default scale: **1 px = 2 cm**.
+
+---
+
+## What is included
+
+```
+human_rig.py          main application + GUI + cutter
+organism_model.py     permanent self-improving body model
+rig_body.py           part mask + local scale (add/remove limbs, bulk)
+rig_gui_extra.py      ALIGN page + ANIMATE page
+rig_pose.py           pose renderer, seam report, auto-tie
+rig_motion.py         preset actions + secondary motion
+rig_tools.py          hidden-area fill, hole repair, rig health check
+requirements.txt      Python packages
+README.md             this file
+```
+
+---
+
+## Install (Windows / macOS / Linux)
+
+### 1. Python
+
+You need **Python 3.10 – 3.12** (3.11 recommended).  
+Check with:
+
+```bash
+python --version
+# or
+python3 --version
+```
+
+### 2. Create a folder and put the files in it
+
+Unzip the package so you have a folder that looks like:
+
+```
+human_rig/
+  human_rig.py
+  organism_model.py
+  rig_gui_extra.py
+  rig_motion.py
+  rig_pose.py
+  rig_tools.py
+  requirements.txt
+  README.md
+```
+
+### 3. Virtual environment (strongly recommended)
+
+```bash
+cd human_rig
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+source .venv/bin/activate
+```
+
+### 4. Install the packages
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+**Notes**
+
+- `mediapipe` downloads a pose model the first time you run ANALYSE (~30 MB). It is cached in `~/.humanrig/`.
+- `rembg` is optional but recommended (clean background removal). The first run also downloads a model.
+- On Linux you may also need:  
+  `sudo apt install python3-tk`  
+  (or the equivalent for your distro) so the GUI works.
+- If MediaPipe or rembg fail to install, the program still runs with a fallback detector and a simple alpha threshold. You can still drag joints and paint by hand.
+
+### 5. Run
+
+```bash
+python human_rig.py
+```
+
+A dark window titled **HUMAN.RIG** should open.
+
+---
+
+## First-time walkthrough
+
+1. **Load sources**  
+   Click the folder / “+ sources” button and select one or more images (or a short GIF).  
+   Best results: character standing, plain background, front + side + back views if possible.
+
+2. **ANALYSE**  
+   The program detects the skeleton and labels every pixel.  
+   Failed frames appear in a list so you can rescue them with the joint tool.
+
+3. **EDIT**  
+   - Switch to the editor page.  
+   - Paint any mis-labelled regions (brush / erase / fill / extend).  
+   - Drag the yellow joint dots if the pose detector was wrong.  
+   - Force a frame to FRONT / SIDE / BACK if the automatic facing is wrong.  
+   - Disable bad frames.
+
+4. **CUT**  
+   Press CUT. Parts are extracted for all three views.  
+   Missing views are synthesised or borrowed when possible.
+
+5. **PICK**  
+   Review the candidate cards and lock the ones you like.  
+   Locks survive future re-cuts.
+
+6. **ALIGN** (optional but recommended)  
+   Drag the coloured dots so the pieces sit tightly on each other.  
+   “AUTO TIE” does most of the work.
+
+7. **ANIMATE**  
+   Choose an action (idle, walk, run, jump \ldots).  
+   Adjust flex / bounce / inertia if you want more or less secondary motion.  
+   Export GIF / APNG / sprite sheet + JSON.
+
+8. **EXPORT**  
+   Writes everything into a `loadouts/<name>/` folder:
+
+   - `rig.png` / `rig_x4.png` – sheet with exploded parts + assembled figures  
+   - `atlas.png` – clean transparent atlas  
+   - `assembled_front.png`, `assembled_side.png`, `assembled_back.png`  
+   - `rig.json` – pivots, hierarchy, lengths, alignment  
+   - `parts/` – individual PNGs  
+   - `animations/` – if you exported any clips  
+
+Loadouts live next to the scripts in a folder called `loadouts/`.  
+Body models (the permanent learner) live in `~/.humanrig/models/`.
+
+---
+
+## Useful folders after first run
+
+| Location | What it is |
+|----------|------------|
+| `./loadouts/` | All your character loadouts |
+| `~/.humanrig/` | MediaPipe model + permanent body models |
+| `./loadouts/<name>/edits/` | Your paint strokes & joint overrides (survive re-analysis) |
+| `./loadouts/<name>/animations/` | Exported GIFs / APNGs / sheets |
+
+---
+
+## Optional: run without MediaPipe / rembg
+
+If those packages are a problem:
+
+```bash
+pip install numpy Pillow scipy
+python human_rig.py
+```
+
+You will get the template pose detector. Use the **JOINTS** tool in the editor to place the yellow dots, then paint the regions. Everything else still works.
+
+---
+
+## BODY panel – add / remove parts & scale
+
+A **BODY** panel sits in the left sidebar.
+
+### Turn limbs off
+
+Checkboxes for Right arm, Left arm, Right leg, Left leg, Head + neck, Torso.
+Uncheck a limb, then press **CUT / UPDATE RIG**. That limb is no longer cut, posed, or animated.
+Turning an upper arm off also removes the forearm and hand. Pelvis is always kept (root).
+
+### Scale regions
+
+Sliders (0.55 – 1.55) for Neck, Chest, Abdomen / gut, Upper arms, Thighs.
+Scale changes both **length** and **thickness** of that region on the next CUT.
+
+**RESET BODY** restores full human + normal proportions.
+
+Settings are saved inside the loadout (`meta.json` → `mask` + `scale`) and survive re-opening.
+
+### What still comes later
+
+- Named bulk paint fields (pec / bicep / calf)
+- Extra spine / neck vertebrae
+- Non-human default masks (dog, bird, plant …)
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| “No module named mediapipe” | `pip install mediapipe` (or use the fallback detector) |
+| GUI does not open / “no display” | On a headless server you need a virtual display or run on a machine with a desktop |
+| Black / empty sprites after CUT | Make sure the character is cut out (alpha) or turn on rembg / paint the background away |
+| Joints look wrong | Switch to JOINTS tool, drag the yellow dots, then CUT again |
+| Side limbs swapped | Use the FLIP FACING button on that frame |
+| “tkinter not found” (Linux) | `sudo apt install python3-tk` |
+
+---
+
+## License / credit
+
+This is your system. The scripts are exactly the ones you provided.  
+Enjoy the rigs.

@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 loadouts/
 .venv/
+*.bak
+*.task
