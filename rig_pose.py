@@ -14,6 +14,7 @@ The functions take G = the globals() of the main rig file so they use exactly it
 import math
 import numpy as np
 from PIL import Image
+import rig_extras as RX
 
 VERTICAL_PAIRS = [("pelvis", "abdomen"), ("abdomen", "chest"), ("chest", "neck"), ("neck", "head"),
                   ("uarmR", "farmR"), ("uarmL", "farmL"), ("thighR", "shinR"), ("thighL", "shinL")]
@@ -45,6 +46,12 @@ def layout(G, res, view, ang, root=(0.0, 0.0), use_align=True):
                 base = (J0[k] - J0[p]) - _al(al, p, "piv") * cpp
             off = base + _al(al, k, "off") + _al(al, k, "piv") * cpp
             pos[k] = pos[p] + rot(off, th[p]); th[k] = th[p] + a
+    for e in RX.active_extras(res, view, keys):            # EXTRA PARTS: tails, ears, wings ... hang from any part
+        spr = RX.sprite_for(e, view, cpp)
+        if spr is None or e.parent not in pos: continue
+        pj[e.id] = np.asarray(spr.pj, float)
+        pos[e.id] = pos[e.parent] + rot(np.asarray(e.view_data(view)["off"], float), th[e.parent])
+        th[e.id] = th[e.parent] + float(ang.get(e.id, e.rest))
     return th, pos, pj
 
 
@@ -58,11 +65,19 @@ def render_pose(G, res, view, angles=None, solid=False, shade=True, crop=True, r
     th0, pos0, _ = layout(G, res, view, {}, (0.0, 0.0))
     Sz = int(1.9 * res.H / cpp); ox, oy = Sz / 2.0, 0.55 * Sz
     canvas = Image.new("RGBA", (Sz, Sz), (0, 0, 0, 0))
-    pivots, ends, d0 = {}, {}, {}
-    order = G["draw_order"](view, getattr(res, "mask", None))
+    pivots, ends, d0, xpiv, xend = {}, {}, {}, {}, {}
+    base_order = G["draw_order"](view, getattr(res, "mask", None))
+    ex_by = {e.id: e for e in RX.active_extras(res, view, base_order) if e.id in pj}
+    order = RX.merge_order(base_order, list(ex_by.values()), view) if ex_by else base_order
     for k in order:
-        sp = S[k]; rgba = G["solidify_sprite"](sp.rgba, k) if solid else sp.rgba
-        if shade and view == "side" and k.endswith("L"):
+        if k in ex_by:
+            e = ex_by[k]; sp = RX.sprite_for(e, view, cpp)
+            rgba = G["solidify_sprite"](sp.rgba, "x_extra") if solid else sp.rgba
+            far = str(e.parent).endswith("L") and e.parent in S
+        else:
+            sp = S[k]; rgba = G["solidify_sprite"](sp.rgba, k) if solid else sp.rgba
+            far = k.endswith("L")
+        if shade and view == "side" and far:
             rgba = rgba.copy(); rgba[..., :3] = (rgba[..., :3] * 0.72).astype(np.uint8)
         im = Image.fromarray(rgba); w, h = im.size; p0 = pj[k]
         pad = int(math.ceil(math.hypot(max(p0[0], w - p0[0]), max(p0[1], h - p0[1])))) + 2
@@ -72,8 +87,9 @@ def render_pose(G, res, view, angles=None, solid=False, shade=True, crop=True, r
         if abs(th[k]) > 1e-6: big = big.rotate(-th[k], resample=Image.Resampling.NEAREST, center=c)
         P = np.array([ox + pos[k][0] / cpp, oy + pos[k][1] / cpp])
         canvas.paste(big, (int(round(P[0] - c[0])), int(round(P[1] - c[1]))), big)
-        pivots[k] = P; vec = np.asarray(sp.pe, float) - p0
-        ends[k] = P + rot(vec, th[k]); d0[k] = math.degrees(math.atan2(vec[1], vec[0]))
+        tp, te = (xpiv, xend) if k in ex_by else (pivots, ends)
+        tp[k] = P; vec = np.asarray(sp.pe, float) - p0
+        te[k] = P + rot(vec, th[k]); d0[k] = math.degrees(math.atan2(vec[1], vec[0]))
     off = np.zeros(2)
     if crop:
         bb = canvas.getbbox() or (0, 0, Sz, Sz)
@@ -87,13 +103,15 @@ def render_pose(G, res, view, angles=None, solid=False, shade=True, crop=True, r
     meta = dict(view=view, note=f"{view} standing pose", pelvis_px=r2(pivots["pelvis"]), draw_order=order,
                 pivots_px={k: r2(p) for k, p in pivots.items()}, ends_px={k: r2(p) for k, p in ends.items()},
                 th=th, d0=d0, origin=[float(off[0]), float(off[1])], size=[Sz, Sz],
-                joints_px={n: r2(pivots[k]) for n, k in jp.items()},
-                joints_cm={n: [round(float(pos0[k][0] - pos0["pelvis"][0]), 1), round(float(pos0[k][1] - pos0["pelvis"][1]), 1)] for n, k in jp.items()},
+                joints_px={n: r2(pivots[k]) for n, k in jp.items() if k in pivots},
+                joints_cm={n: [round(float(pos0[k][0] - pos0["pelvis"][0]), 1), round(float(pos0[k][1] - pos0["pelvis"][1]), 1)] for n, k in jp.items() if k in pos0},
                 rest_angles=G["rest_angles"](view), parent={k: G["parent_key"](k) for k in PART_KEYS},
                 lengths_cm={n: round(float(v), 1) for n, v in res.lengths.items()},
                 shoulder_width_cm=round(res.widths["sho"], 1), hip_width_cm=round(res.widths["hip"], 1),
                 alignment=((getattr(res, "align", None) or {}).get(view) or {}),
-                parts={k: dict(pivot_world=r2(pivots[k]), parent=G["parent_key"](k), kind=S[k].kind) for k in PART_KEYS})
+                parts={k: dict(pivot_world=r2(pivots[k]), parent=G["parent_key"](k), kind=S[k].kind) for k in PART_KEYS if k in pivots},
+                extras_px={k: r2(p) for k, p in xpiv.items()}, extras_ends_px={k: r2(p) for k, p in xend.items()},
+                extras={k: dict(pivot_world=r2(p), parent=ex_by[k].parent, layer=ex_by[k].view_data(view).get("layer", "front")) for k, p in xpiv.items()})
     return canvas, meta
 
 

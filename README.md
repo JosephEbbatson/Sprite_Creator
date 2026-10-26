@@ -26,6 +26,8 @@ rig_gui_extra.py      ALIGN page + ANIMATE page
 rig_pose.py           pose renderer, seam report, auto-tie
 rig_motion.py         preset actions + secondary motion
 rig_tools.py          hidden-area fill, hole repair, rig health check
+rig_extras.py         EXTRA PARTS: cut / copy / mirror / motion (no GUI)
+rig_extras_gui.py     the EXTRAS page
 requirements.txt      Python packages
 README.md             this file
 ```
@@ -192,11 +194,36 @@ Scale changes both **length** and **thickness** of that region on the next CUT.
 
 Settings are saved inside the loadout (`meta.json` → `mask` + `scale`) and survive re-opening.
 
+## EXTRAS page - add parts (tails, ears, horns, wings, extra arms ...)
+
+The base rig is always the same 17 human parts. **Extras** are new parts you add on top, so one body can become many
+variants. They live in their own layer: the learned body model and the 17 base parts are never touched.
+Needs a CUT rig first.
+
+1. **CUT** - load a source: copy one of the rig's own parts (FRONT/SIDE/BACK + part), or **IMPORT IMAGE...** (any picture).
+   Click around the bit you want with the lasso (or drag freehand; click the first dot or double-click to close; right-click
+   undoes a point). Tick *No lasso* for a plain copy. **REMOVE FLAT BACKGROUND** helps with cut-outs on a plain colour.
+   Pick what to attach it to, which views it applies to, the pivot, and a motion preset, then **MAKE PART**.
+2. **PIVOT** - drag the pink dot to where the part rotates (base of a tail, root of an ear). Or use the pivot presets.
+3. **PLACE** - drag the part on the body. Positions, pivot, layer and visibility are stored **per view**.
+
+Per part you can set: size, rest rotation, parent (any base part, or another extra - so a tail can be a chain),
+layer (behind / in front of its parent, or of the whole body), flip, **MIRROR TWIN** (left/right pair), duplicate.
+
+**Motion** - presets (rigid, ear, tail, hair/cape, wing, antenna, dangling) or your own: stiffness, damping, inertia
+(shoved by the hips), how much it follows its parent, and an idle sway. Extras move on the ANIMATE page together with the
+body (and use its FLEX / BOUNCE / INERTIA sliders) and their angles are included in the exported animation JSON.
+
+Saved inside the loadout (`meta.json` -> `extras`, pictures in `extras/src/`). On SAVE & EXPORT the game-ready sprites are
+written to `extras/<id>_<view>.png` and described in `rig.json` under `"extras"` (parent, pivot_px, offset_cm per view,
+layer, motion). The assembled figures include the extras at rest.
+
 ### What still comes later
 
 - Named bulk paint fields (pec / bicep / calf)
 - Extra spine / neck vertebrae
-- Non-human default masks (dog, bird, plant …)
+- Non-human default masks (dog, bird, plant ...)
+- Extras in the exploded RIG SHEET / atlas (they are exported as separate PNGs for now)
 
 ## Troubleshooting
 

@@ -23,6 +23,8 @@ import rig_pose as RP
 import rig_motion as RM
 import rig_gui_extra as RGX
 import rig_body as RB
+import rig_extras as RX
+import rig_extras_gui as RXG
 
 CM_PER_PX = 2.0
 SS = 3
@@ -1459,9 +1461,12 @@ class Loadout:
             self.meta["widths"] = {k:round(float(x),3) for k,x in res.widths.items()}
             self.meta["mask"] = {k: bool(v) for k, v in RB.normalize_mask(getattr(res, "mask", None)).items()}
             self.meta["scale"] = {k: round(float(v), 3) for k, v in RB.normalize_scale(getattr(res, "scale", None)).items()}
+            self.meta["extras"] = RX.save_extras(self.path/"extras", getattr(res, "extras", None) or [])
+            ex_info = RX.export_extras(res, self.path/"extras")
             rig = dict(name=self.name, height_cm=self.meta["height_cm"], cm_per_px=self.meta["cm_per_px"],
                        sheet=res.meta, assembled=res.asm_meta,
-                       hierarchy={k: parent_key(k) for k in PART_KEYS}, alignment=getattr(res, "align", None) or {}, rotation="degrees, clockwise positive, about each part's pivot")
+                       hierarchy={k: parent_key(k) for k in PART_KEYS}, alignment=getattr(res, "align", None) or {}, extras=ex_info,
+                       rotation="degrees, clockwise positive, about each part's pivot")
             with open(self.path/"rig.json","w") as f: json.dump(rig, f, indent=2)
             if getattr(res, "cands_dirty", False): self.write_cands(res); res.cands_dirty = False
         self.write_meta()
@@ -1548,6 +1553,7 @@ class Loadout:
         res.align = self.meta.get("align", {}) or {}
         res.mask = RB.normalize_mask(self.meta.get("mask"))
         res.scale = RB.normalize_scale(self.meta.get("scale"))
+        res.extras = RX.load_extras(self.path/"extras", self.meta.get("extras"))
         finalize_views(res); render_outputs(res)
         return res
     def add_source(self, src_path):
@@ -1962,7 +1968,7 @@ def _build_gui_class(standalone=False):
             self.stack.grid_rowconfigure(0, weight=1); self.stack.grid_columnconfigure(0, weight=1)
             self.pages, self.tabs = {}, {}
             for key,title in (("editor","EDITOR"),("sheet","RIG SHEET"),("asm","ASSEMBLED"),("pose","POSE"),
-                              ("guide","PICK PARTS"),("align","ALIGN"),("anim","ANIMATE"),("log","LOG / HELP")):
+                              ("guide","PICK PARTS"),("align","ALIGN"),("anim","ANIMATE"),("extras","EXTRAS"),("log","LOG / HELP")):
                 f = tk.Frame(self.stack, bg=BG1); f.grid(row=0, column=0, sticky="nsew"); self.pages[key] = f
                 t = tk.Label(self.tabbar, text=title, bg=BG2, fg=MUTED, font=self.F["cardb"], padx=16, pady=7, cursor="hand2",
                              highlightthickness=1, highlightbackground=LINE)
@@ -1970,7 +1976,7 @@ def _build_gui_class(standalone=False):
             self.build_editor(self.pages["editor"]); self.build_sheet_page(self.pages["sheet"])
             self.build_asm_page(self.pages["asm"]); self.build_pose(self.pages["pose"])
             self.build_guide(self.pages["guide"]); self.build_log(self.pages["log"])
-            self.build_align(self.pages["align"]); self.build_anim(self.pages["anim"])
+            self.build_align(self.pages["align"]); self.build_anim(self.pages["anim"]); self.build_extras(self.pages["extras"])
 
             bar = tk.Frame(self, bg=BG1, highlightthickness=1, highlightbackground=LINE); bar.pack(fill="x", padx=10, pady=(4,8))
             self.status = tk.Label(bar, text="", bg=BG1, fg=ACC, font=self.F["ui"], anchor="w")
@@ -2087,6 +2093,7 @@ def _build_gui_class(standalone=False):
             if key == "pose": self.after(30, self.pose_refresh)
             if key == "align": self.after(30, self.align_refresh)
             if key == "anim": self.after(30, self.anim_refresh)
+            if key == "extras": self.after(30, self.extras_refresh)
 
         # ------------------------------------------------------------------ editor page
         def build_editor(self, page):
@@ -2180,6 +2187,7 @@ def _build_gui_class(standalone=False):
             if isinstance(w, (tk.Entry, tk.Spinbox, tk.Text)): return
             ch = (e.char or "").lower()
             if getattr(self, "cur_page", "") == "align" and self.align_key(e): return
+            if getattr(self, "cur_page", "") == "extras" and self.extras_key(e): return
             if getattr(self, "cur_page", "") == "guide":
                 if e.keysym == "Left": return self.guide_step(-1)
                 if e.keysym == "Right": return self.guide_step(1)
@@ -2809,7 +2817,9 @@ def _build_gui_class(standalone=False):
         def on_cut(self, res):
             self.busy = False; self.set_progress(0)
             try:
-                lo = self.ensure_loadout(); res.name = lo.name; self.res = res; lo.chosen = res.chosen; self._align = res.align
+                lo = self.ensure_loadout(); res.name = lo.name
+                res.extras = list(getattr(self.res, "extras", None) or RX.load_extras(lo.path/"extras", lo.meta.get("extras")))
+                self.res = res; lo.chosen = res.chosen; self._align = res.align
                 lo.save(res); self.last_saved = datetime.datetime.now().strftime("%H:%M:%S")
             except Exception: self.log("save failed:\n" + traceback.format_exc(), "err")
             self.dirty = False; self.ed_dirty.config(text=""); self.exported = False; self.refresh_model()
@@ -3125,6 +3135,8 @@ def _build_gui_class(standalone=False):
 
     RGX.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
                                          ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
+    RXG.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
+                                           ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
     _GUI_CACHE[standalone] = RigWindow
     return RigWindow
 

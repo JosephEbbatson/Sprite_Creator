@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 import rig_pose as RP
 import rig_motion as RM
+import rig_extras as RX
 
 VIEWS = ("front", "side", "back")
 
@@ -286,7 +287,8 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         self.an_clip = RM.build_clip(self.an_key, self.an_view, L)
         kw = dict(speed=self.v_an_speed.get(), fps=fps)
         self.an_frames = RM.simulate(self.an_clip, L, flex=self.v_an_flex.get(), bounce=self.v_an_bounce.get(), inertia=self.v_an_inertia.get(), jitter=self.v_an_jitter.get(), **kw)
-        ghost = RM.simulate(self.an_clip, L, flex=0.0, **kw); self.an_imgs, self.an_ghost, self.an_photos = [], [], []
+        self.an_frames = self._an_extras(self.an_frames, self.an_clip, self.v_an_flex.get())
+        ghost = self._an_extras(RM.simulate(self.an_clip, L, flex=0.0, **kw), self.an_clip, 0.0); self.an_imgs, self.an_ghost, self.an_photos = [], [], []
         self.an_scrub.config(to=max(1, len(self.an_frames) - 1)); self.config(cursor="watch")
         def chunk():
             if tok != self.an_token: self.config(cursor=""); return
@@ -300,6 +302,16 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
             if len(self.an_imgs) < len(self.an_frames): self.after(5, chunk)
             else: self.config(cursor=""); self.an_rephoto(); self.an_play()
         chunk()
+
+    @add
+    def _an_extras(self, frames, clip, flex):
+        """Add the motion of the EXTRA parts (tail, ears, wings ...) to simulated frames."""
+        try:
+            return RX.simulate_extras(frames, getattr(self.res, "extras", None) or [], self.res, self.an_view,
+                                      fps=int(self.v_an_fps.get() or 24), loop=clip.loop, flex=flex, bounce=self.v_an_bounce.get(),
+                                      inertia=self.v_an_inertia.get(), speed=self.v_an_speed.get(), clip_dur=clip.dur)
+        except Exception as ex:
+            self.log(f"extra-part motion skipped ({ex!r})", "warn"); return frames
 
     @add
     def an_rephoto(self, *_):
@@ -384,7 +396,7 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
                 if not a["ok"]: continue
                 self.toast(f"Exporting {a['label']}..."); self.update_idletasks()
                 clip = RM.build_clip(a["key"], self.an_view, L)
-                fr = RM.simulate(clip, L, flex=self.v_an_flex.get(), bounce=self.v_an_bounce.get(), inertia=self.v_an_inertia.get(), jitter=self.v_an_jitter.get(), speed=self.v_an_speed.get(), fps=fps)
+                fr = self._an_extras(RM.simulate(clip, L, flex=self.v_an_flex.get(), bounce=self.v_an_bounce.get(), inertia=self.v_an_inertia.get(), jitter=self.v_an_jitter.get(), speed=self.v_an_speed.get(), fps=fps), clip, self.v_an_flex.get())
                 im = [G["render_pose"](self.res, self.an_view, f["angles"], shade=True, crop=False, rest=False, root=f["root"])[0] for f in fr]
                 self._an_write(clip, fr, im, a["key"]); done += 1
             self.toast(f"Exported {done} animation(s) to {self.loadout.path / 'animations'}", "ok")
