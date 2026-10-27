@@ -28,6 +28,8 @@ rig_motion.py         preset actions + secondary motion
 rig_tools.py          hidden-area fill, hole repair, rig health check
 rig_extras.py         EXTRA PARTS: cut / copy / mirror / motion (no GUI)
 rig_extras_gui.py     the EXTRAS page
+rig_sheet_import.py   reads a finished green-cell pixel sheet (no GUI)
+rig_sheet_import_gui.py  the IMPORT SHEET button
 rig_journey.py        GUIDED mode: numbered steps, BACK / NEXT, MORE menu
 rig_trim.py           TRIM: erase / restore single pixels of finished parts (no GUI)
 rig_trim_gui.py       the TRIM page
@@ -196,6 +198,15 @@ Scale changes both **length** and **thickness** of that region on the next CUT.
 **RESET BODY** restores full human + normal proportions.
 
 Settings are saved inside the loadout (`meta.json` → `mask` + `scale`) and survive re-opening.
+
+## IMPORT SHEET - start from a finished pixel sprite (no source photos)
+
+Press **IMPORT SHEET** (next to + FILES) and pick a picture of your sprite sheet: every part drawn in its own green cell
+with a red border, laid out like the body (head on top, arms beside the chest ...). It can show several figures side by
+side, e.g. the living body and the CORPSE materials; a small window asks which is which and the character's height.
+The parts are read by position, given joints that follow the drawing, and become the FRONT view; side and back are guessed
+from the front until you bring real ones. Spare cells at the outer edges are ignored. The corpse figure is stored in
+`corpse/front/` inside the loadout.
 
 ## GUIDED mode (default)
 

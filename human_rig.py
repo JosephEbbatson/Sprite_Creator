@@ -28,6 +28,7 @@ import rig_extras_gui as RXG
 import rig_trim as TRM
 import rig_trim_gui as TRG
 import rig_journey as RJ
+import rig_sheet_import_gui as SIG
 
 CM_PER_PX = 2.0
 SS = 3
@@ -1503,7 +1504,23 @@ class Loadout:
                        rotation="degrees, clockwise positive, about each part's pivot")
             atomic_write_json(self.path/"rig.json", rig, indent=2)
             if getattr(res, "cands_dirty", False): self.write_cands(res); res.cands_dirty = False
+        self.save_corpse(res)
         self.write_meta()
+    def save_corpse(self, res):
+        """Corpse materials (what the body turns into on death): one picture per part and view in corpse/<view>/."""
+        cp = getattr(res, "corpse", None) or {}
+        for v, parts in cp.items():
+            d = self.path/"corpse"/v; d.mkdir(parents=True, exist_ok=True)
+            for k, arr in parts.items(): Image.fromarray(arr).save(d/f"{k}.png")
+        self.meta["corpse"] = {v: sorted(p) for v, p in cp.items()} if cp else self.meta.get("corpse", {})
+    def load_corpse(self):
+        out = {}
+        for v in VIEWS:
+            d = self.path/"corpse"/v
+            if d.exists():
+                for p in d.glob("*.png"):
+                    if p.stem in PART_KEYS: out.setdefault(v, {})[p.stem] = np.array(Image.open(p).convert("RGBA"))
+        return out
     def write_cands(self, res):
         arrays, index = {}, {}
         for v in VIEWS:
@@ -1590,6 +1607,7 @@ class Loadout:
         res.scale = RB.normalize_scale(self.meta.get("scale"))
         res.extras = RX.load_extras(self.path/"extras", self.meta.get("extras"))
         res.trims = TRM.from_meta(self.meta.get("trims"))
+        res.corpse = self.load_corpse()
         finalize_views(res); render_outputs(res)
         return res
     def add_source(self, src_path):
@@ -1837,7 +1855,7 @@ def _build_gui_class(standalone=False):
         def coach_state(self):
             lo = self.loadout; locks = sum(len(d) for d in self.locks.values())
             if lo is None: return ("1  START", "Create a character. Click NEW (top-left), type a name, then add your images.", "NEW", self.new_loadout)
-            if not self.sources: return ("1  ADD IMAGES", "Add your source images (cut-out, full body). Include FRONT, SIDE and BACK shots if you can.", "+ FILES", self.add_files)
+            if not self.sources: return ("1  ADD IMAGES", "Add your source images (cut-out, full body). Include FRONT, SIDE and BACK shots if you can.  Already have a finished pixel sprite sheet? Use IMPORT SHEET instead.", "+ FILES", self.add_files)
             if not self.frames and self.res is None: return ("2  ANALYSE", "Click ANALYSE. The program finds the skeleton and colours every body part in every image.", "ANALYSE", self.analyse)
             if self.dirty: return ("3  CUT", "You changed labels or joints. They are already saved with the character, but the rig does not use them until you click CUT.", "CUT", self.cut)
             if self.res is None: return ("2  EDIT", "Each colour is a body part. Pick a part chip on the right, then paint wrong areas (arm, torso, legs). Check every frame, then click CUT.", "CUT", self.cut)
@@ -2041,6 +2059,7 @@ def _build_gui_class(standalone=False):
             r = tk.Frame(f, bg=BG1); r.pack(fill="x", pady=(5,0))
             self.mk_btn(r, "+ FILES", self.add_files, pady=3).pack(side="left")
             self.mk_btn(r, "+ FOLDER", self.add_folder, pady=3).pack(side="left", padx=4)
+            self.mk_btn(r, "IMPORT SHEET", self.import_sheet, "p", pady=3).pack(side="left", padx=(0,4))
             self.mk_btn(r, "REMOVE", self.remove, "d", pady=3).pack(side="left")
             p, f = self.mk_panel(L, "FRAMES   (click to edit)", PINK); p.pack(fill="both", expand=True, pady=(0,6))
             self.fl = self.mk_list(f, 6); self.fl.pack(fill="both", expand=True)
@@ -3191,6 +3210,7 @@ def _build_gui_class(standalone=False):
                                            ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
     TRG.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
                                            ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
+    SIG.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, TEXT=TEXT, MUTED=MUTED, ACC=ACC, WARN=WARN, GOOD=GOOD), tk, ttk, ImageTk, filedialog, messagebox)
     RJ.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
                                           ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
     _GUI_CACHE[standalone] = RigWindow
