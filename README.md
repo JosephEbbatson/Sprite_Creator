@@ -28,6 +28,8 @@ rig_motion.py         preset actions + secondary motion
 rig_tools.py          hidden-area fill, hole repair, rig health check
 rig_extras.py         EXTRA PARTS: cut / copy / mirror / motion (no GUI)
 rig_extras_gui.py     the EXTRAS page
+rig_trim.py           TRIM: erase / restore single pixels of finished parts (no GUI)
+rig_trim_gui.py       the TRIM page
 requirements.txt      Python packages
 README.md             this file
 ```
@@ -194,6 +196,19 @@ Scale changes both **length** and **thickness** of that region on the next CUT.
 
 Settings are saved inside the loadout (`meta.json` → `mask` + `scale`) and survive re-opening.
 
+## TRIM page - fine-tune finished parts (white crescents under raised arms, hips ...)
+
+Some cut parts carry material that is hidden while the limb hangs down but shows when it rotates (the upper-arm sleeve
+under a raised arm, the underwear edge beside the hip). TRIM lets you delete those pixels by hand **after** the cut.
+
+- Pick FRONT / SIDE / BACK and a part. Tools: **ERASE BRUSH**, **RESTORE BRUSH**, **ERASE INSIDE SHAPE**, **KEEP ONLY INSIDE SHAPE**
+  (lasso: click points, click the first dot or double-click to close, right-click undoes a point).
+- The **live preview** shows the whole figure in NEUTRAL, ARMS UP or LEGS APART so you see exactly what the trim fixes.
+- Ctrl+Z / Ctrl+Y undo and redo, `[` and `]` change brush size, RESET THIS PART / RESET EVERYTHING bring pixels back.
+- Trims are **non-destructive**: stored in `meta.json` -> `trims` as offsets from each part's pivot, so they survive
+  re-cutting. `parts/` holds the trimmed (final) PNGs, `parts_raw/` the untouched cuts. Tip: the CUT page's
+  *Overlap SIZE %* slider is the first lever if a crescent is large.
+
 ## EXTRAS page - add parts (tails, ears, horns, wings, extra arms ...)
 
 The base rig is always the same 17 human parts. **Extras** are new parts you add on top, so one body can become many
@@ -205,7 +220,12 @@ Needs a CUT rig first.
    undoes a point). Tick *No lasso* for a plain copy. **REMOVE FLAT BACKGROUND** helps with cut-outs on a plain colour.
    Pick what to attach it to, which views it applies to, the pivot, and a motion preset, then **MAKE PART**.
 2. **PIVOT** - drag the pink dot to where the part rotates (base of a tail, root of an ear). Or use the pivot presets.
-3. **PLACE** - drag the part on the body. Positions, pivot, layer and visibility are stored **per view**.
+3. **PLACE** - drag the part on the body. Positions, pivot, size, layer and visibility are stored **per view**.
+
+**Every view is its own part.** A part made for the front does not show in side or back until you make one for them:
+cut in that view, choose *add to the selected part* instead of *new part*, and press the button (or COPY TO ALL VIEWS for
+a quick start). The list shows `[F S B]` for the views a part has. Ctrl+Z / Ctrl+Y undo extras edits; arrow keys nudge only
+while the canvas has focus, and the mouse wheel over sliders scrolls the panel instead of changing them.
 
 Per part you can set: size, rest rotation, parent (any base part, or another extra - so a tail can be a chain),
 layer (behind / in front of its parent, or of the whole body), flip, **MIRROR TWIN** (left/right pair), duplicate.

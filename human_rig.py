@@ -25,6 +25,8 @@ import rig_gui_extra as RGX
 import rig_body as RB
 import rig_extras as RX
 import rig_extras_gui as RXG
+import rig_trim as TRM
+import rig_trim_gui as TRG
 
 CM_PER_PX = 2.0
 SS = 3
@@ -947,6 +949,7 @@ def finalize_views(res):
             if skin and base_of(k) in ("head", "neck", "uarm", "farm", "hand", "thigh", "shin", "foot"):
                 col = skin[len(skin)//2]
             res.views[v][k] = _make_placeholder(k, res.lengths, res.cpp, col, v)
+    TRM.apply_trims(res)            # manual pixel erasures (TRIM page) on top of the raw cuts
 
 def _tkey(ck, view, near):
     """target key of a part in a side view (R = near limb)"""
@@ -1320,7 +1323,7 @@ def build_rig_sheet(res):
         for k in PART_KEYS:
             sp = S[k]; X,Y,w_,h_ = R[k]
             d.rectangle([X-1,Y-1,X+w_,Y+h_], fill=CELL_BG, outline=KIND_COL.get(sp.kind,CELL_LINE))
-            lc = KIND_COL[sp.kind] if sp.kind != "own" else (130,150,190)
+            lc = KIND_COL.get(sp.kind, CELL_LINE) if sp.kind != "own" else (130,150,190)
             if sp.kind == "own": lc = (110,130,170)
             lab = pretty(k); draw_text(d, X+w_//2-text_w(lab)//2, Y+h_+3, lab, lc)
         for k in PART_KEYS:
@@ -1438,11 +1441,16 @@ class Loadout:
         if res is not None:
             res.name = self.name
             for v in VIEWS:
-                d = self.path/"parts"/v
+                d = self.path/"parts"/v; dr = self.path/"parts_raw"/v
                 for p in d.glob("*.png"): p.unlink()
+                if dr.exists():
+                    for p in dr.glob("*.png"): p.unlink()
                 self.meta["views"][v] = {}
                 for k,sp in res.chosen.get(v,{}).items():
-                    Image.fromarray(sp.rgba).save(d/f"{k}.png")
+                    fin = TRM.final_rgba(res, v, k, sp)
+                    Image.fromarray(fin).save(d/f"{k}.png")
+                    if fin is not sp.rgba:                       # trimmed: keep the untouched cut so the trim stays reversible
+                        dr.mkdir(parents=True, exist_ok=True); Image.fromarray(sp.rgba).save(dr/f"{k}.png")
                     self.meta["views"][v][k] = dict(pivot_a=[round(float(x),2) for x in sp.pa],
                         pivot_b=[round(float(x),2) for x in sp.pb], length_cm=sp.length_cm,
                         pivot_j=[round(float(x),2) for x in sp.pj], pivot_e=[round(float(x),2) for x in sp.pe],
@@ -1461,6 +1469,7 @@ class Loadout:
             self.meta["widths"] = {k:round(float(x),3) for k,x in res.widths.items()}
             self.meta["mask"] = {k: bool(v) for k, v in RB.normalize_mask(getattr(res, "mask", None)).items()}
             self.meta["scale"] = {k: round(float(v), 3) for k, v in RB.normalize_scale(getattr(res, "scale", None)).items()}
+            self.meta["trims"] = TRM.to_meta(res)
             self.meta["extras"] = RX.save_extras(self.path/"extras", getattr(res, "extras", None) or [])
             ex_info = RX.export_extras(res, self.path/"extras")
             rig = dict(name=self.name, height_cm=self.meta["height_cm"], cm_per_px=self.meta["cm_per_px"],
@@ -1521,7 +1530,8 @@ class Loadout:
             for p in d.glob("*.png"):
                 k = p.stem
                 if k not in PART_KEYS: continue
-                arr = np.array(Image.open(p).convert("RGBA"))
+                rp = self.path/"parts_raw"/v/p.name
+                arr = np.array(Image.open(rp if rp.exists() else p).convert("RGBA"))
                 info = self.meta["views"].get(v,{}).get(k) or (self.meta.get("parts",{}).get(k,{}) if v=="front" else {})
                 sp = Sprite(); sp.key, sp.rgba = k, arr
                 sp.pa = np.array(info.get("pivot_a",[arr.shape[1]/2,0]),float)
@@ -1554,6 +1564,7 @@ class Loadout:
         res.mask = RB.normalize_mask(self.meta.get("mask"))
         res.scale = RB.normalize_scale(self.meta.get("scale"))
         res.extras = RX.load_extras(self.path/"extras", self.meta.get("extras"))
+        res.trims = TRM.from_meta(self.meta.get("trims"))
         finalize_views(res); render_outputs(res)
         return res
     def add_source(self, src_path):
@@ -1968,7 +1979,7 @@ def _build_gui_class(standalone=False):
             self.stack.grid_rowconfigure(0, weight=1); self.stack.grid_columnconfigure(0, weight=1)
             self.pages, self.tabs = {}, {}
             for key,title in (("editor","EDITOR"),("sheet","RIG SHEET"),("asm","ASSEMBLED"),("pose","POSE"),
-                              ("guide","PICK PARTS"),("align","ALIGN"),("anim","ANIMATE"),("extras","EXTRAS"),("log","LOG / HELP")):
+                              ("guide","PICK PARTS"),("trim","TRIM"),("align","ALIGN"),("anim","ANIMATE"),("extras","EXTRAS"),("log","LOG / HELP")):
                 f = tk.Frame(self.stack, bg=BG1); f.grid(row=0, column=0, sticky="nsew"); self.pages[key] = f
                 t = tk.Label(self.tabbar, text=title, bg=BG2, fg=MUTED, font=self.F["cardb"], padx=16, pady=7, cursor="hand2",
                              highlightthickness=1, highlightbackground=LINE)
@@ -1976,7 +1987,7 @@ def _build_gui_class(standalone=False):
             self.build_editor(self.pages["editor"]); self.build_sheet_page(self.pages["sheet"])
             self.build_asm_page(self.pages["asm"]); self.build_pose(self.pages["pose"])
             self.build_guide(self.pages["guide"]); self.build_log(self.pages["log"])
-            self.build_align(self.pages["align"]); self.build_anim(self.pages["anim"]); self.build_extras(self.pages["extras"])
+            self.build_align(self.pages["align"]); self.build_anim(self.pages["anim"]); self.build_extras(self.pages["extras"]); self.build_trim(self.pages["trim"])
 
             bar = tk.Frame(self, bg=BG1, highlightthickness=1, highlightbackground=LINE); bar.pack(fill="x", padx=10, pady=(4,8))
             self.status = tk.Label(bar, text="", bg=BG1, fg=ACC, font=self.F["ui"], anchor="w")
@@ -2094,6 +2105,7 @@ def _build_gui_class(standalone=False):
             if key == "align": self.after(30, self.align_refresh)
             if key == "anim": self.after(30, self.anim_refresh)
             if key == "extras": self.after(30, self.extras_refresh)
+            if key == "trim": self.after(30, self.trim_refresh)
 
         # ------------------------------------------------------------------ editor page
         def build_editor(self, page):
@@ -2188,6 +2200,7 @@ def _build_gui_class(standalone=False):
             ch = (e.char or "").lower()
             if getattr(self, "cur_page", "") == "align" and self.align_key(e): return
             if getattr(self, "cur_page", "") == "extras" and self.extras_key(e): return
+            if getattr(self, "cur_page", "") == "trim" and self.trim_key(e): return
             if getattr(self, "cur_page", "") == "guide":
                 if e.keysym == "Left": return self.guide_step(-1)
                 if e.keysym == "Right": return self.guide_step(1)
@@ -2819,6 +2832,8 @@ def _build_gui_class(standalone=False):
             try:
                 lo = self.ensure_loadout(); res.name = lo.name
                 res.extras = list(getattr(self.res, "extras", None) or RX.load_extras(lo.path/"extras", lo.meta.get("extras")))
+                res.trims = dict(getattr(self.res, "trims", None) or TRM.from_meta(lo.meta.get("trims")))
+                finalize_views(res)                              # re-apply the manual trims to the fresh cut
                 self.res = res; lo.chosen = res.chosen; self._align = res.align
                 lo.save(res); self.last_saved = datetime.datetime.now().strftime("%H:%M:%S")
             except Exception: self.log("save failed:\n" + traceback.format_exc(), "err")
@@ -3136,6 +3151,8 @@ def _build_gui_class(standalone=False):
     RGX.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
                                          ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
     RXG.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
+                                           ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
+    TRG.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
                                            ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
     _GUI_CACHE[standalone] = RigWindow
     return RigWindow

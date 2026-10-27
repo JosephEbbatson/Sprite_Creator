@@ -58,7 +58,23 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         def off(_):
             outer.unbind_all("<MouseWheel>"); outer.unbind_all("<Button-4>"); outer.unbind_all("<Button-5>")
         outer.bind("<Enter>", on); outer.bind("<Leave>", off)
+        outer._cv = cv
         return outer, inner
+
+    @add
+    def _ex_wheel_guard(self, root, outer):
+        """The mouse wheel must scroll the side panel and NEVER change a slider, dropdown or spin box that happens to be
+        under the pointer (that is how settings got changed by accident)."""
+        cv = outer._cv
+        def scroll(e):
+            d = -1 if (getattr(e, "num", 0) == 4 or getattr(e, "delta", 0) > 0) else 1
+            cv.yview_scroll(d * 2, "units"); return "break"
+        def walk(w):
+            for c in w.winfo_children():
+                if isinstance(c, (tk.Scale, ttk.Combobox, tk.Spinbox, tk.Listbox)):
+                    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"): c.bind(seq, scroll)
+                walk(c)
+        walk(root)
 
     @add
     def _ex_combo(self, parent, var, values, cmd=None, width=22):
@@ -82,8 +98,9 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         self.v_ex_srcview, self.v_ex_srcpart = sv(value="front"), sv(value="head")
         self.v_ex_whole = bv(value=False)
         self.v_mk_name, self.v_mk_parent = sv(value="tail"), sv(value="")
-        self.v_mk_views = {v: bv(value=True) for v in VIEWS}
+        self.v_mk_views = {v: bv(value=(v == "front")) for v in VIEWS}
         self.v_mk_pivot, self.v_mk_motion = sv(value="top"), sv(value=PRESETS[0])
+        self.v_mk_target = sv(value="new"); self._ex_hist, self._ex_hpos, self._ex_hist_owner = [], -1, None
 
         right_outer, R = self._ex_scrollframe(page, 340)
         right_outer.pack(side="right", fill="y", padx=8, pady=8)
@@ -110,6 +127,9 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         p, f = self.mk_panel(R, "EXTRA PARTS ON THIS CHARACTER", PINK); p.pack(fill="x", pady=(0, 6))
         self.ex_lb = self.mk_list(f, 5); self.ex_lb.pack(fill="x"); self.ex_lb.bind("<<ListboxSelect>>", self.ex_pick)
         r = tk.Frame(f, bg=BG1); r.pack(fill="x", pady=(4, 0))
+        self.mk_btn(r, "↶ UNDO", self.ex_hist_undo, "n", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x", padx=(0, 2))
+        self.mk_btn(r, "↷ REDO", self.ex_hist_redo, "n", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x")
+        r = tk.Frame(f, bg=BG1); r.pack(fill="x", pady=(3, 0))
         self.mk_btn(r, "MIRROR TWIN", self.ex_mirror, "n", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x", padx=(0, 2))
         self.mk_btn(r, "DUPLICATE", self.ex_dup, "n", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x", padx=(0, 2))
         self.mk_btn(r, "DELETE", self.ex_delete, "d", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x")
@@ -136,13 +156,18 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         self.mk_label(r, "NAME").pack(side="left"); self.mk_entry(r, self.v_mk_name, 14).pack(side="left", padx=4)
         self.mk_label(f, "ATTACH TO").pack(anchor="w", pady=(3, 0))
         self.mk_parent_cb = self._ex_combo(f, self.v_mk_parent, [], width=30); self.mk_parent_cb.pack(anchor="w")
-        r = tk.Frame(f, bg=BG1); r.pack(fill="x", pady=(3, 0)); self.mk_label(r, "VIEWS").pack(side="left")
-        for v in VIEWS: self.mk_check(r, v, self.v_mk_views[v]).pack(side="left", padx=3)
+        self.mk_label(f, "Every view needs its own cut (front, side and back are different pictures). Make the part for one view, then load "
+                         "the next view's picture and choose 'add as a view of the selected part'.", DIM, wraplength=300, justify="left").pack(anchor="w", pady=(4, 0))
+        r = tk.Frame(f, bg=BG1); r.pack(fill="x", pady=(3, 0)); self.mk_label(r, "FOR VIEW").pack(side="left")
+        for v in VIEWS: self.mk_check(r, v, self.v_mk_views[v], self._ex_update_make_btn).pack(side="left", padx=3)
         r = tk.Frame(f, bg=BG1); r.pack(fill="x", pady=(3, 0)); self.mk_label(r, "PIVOT").pack(side="left")
         self._ex_combo(r, self.v_mk_pivot, list(PIVOTS), width=8).pack(side="left", padx=4)
         self.mk_label(r, "MOTION").pack(side="left", padx=(6, 0))
         self._ex_combo(r, self.v_mk_motion, PRESETS, width=19).pack(side="left", padx=4)
-        self.mk_btn(f, "✂   MAKE PART", self.ex_make, "g", pady=7).pack(fill="x", pady=(6, 0))
+        for val, txt in (("new", "make a NEW part"), ("add", "add as a VIEW of the selected part")):
+            tk.Radiobutton(f, text=txt, value=val, variable=self.v_mk_target, command=self._ex_update_make_btn, bg=BG1, fg=TEXT, selectcolor=BG0,
+                           activebackground=BG1, activeforeground=ACC, font=self.F["s"], anchor="w", highlightthickness=0).pack(fill="x")
+        self.ex_make_btn = self.mk_btn(f, "✂   MAKE PART", self.ex_make, "g", pady=7); self.ex_make_btn.pack(fill="x", pady=(4, 0))
 
         # ---- right 2: the selected part
         p, f = self.mk_panel(R, "2  THIS PART", GOLD); p.pack(fill="x", pady=(0, 6))
@@ -155,7 +180,7 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         self.mk_label(f, "LAYER  (this view)").pack(anchor="w", pady=(3, 0))
         self._ex_combo(f, self.v_ex_layer, LAYER_NAMES, lambda: self.ex_apply(True), width=30).pack(anchor="w")
         self.mk_check(f, "Show in this view", self.v_ex_show, lambda: self.ex_apply(True)).pack(anchor="w")
-        self.mk_label(f, "SIZE").pack(anchor="w")
+        self.mk_label(f, "SIZE  (this view only)").pack(anchor="w")
         s = self.mk_scale(f, self.v_ex_size, 0.1, 4.0, self.ex_slider, res=0.05); s.config(length=300); s.pack(fill="x"); s.bind("<ButtonRelease-1>", lambda e: self.ex_commit())
         self.ex_size_lbl = self.mk_label(f, "", DIM); self.ex_size_lbl.pack(anchor="w")
         self.mk_label(f, "ROTATION  (rest angle, degrees)").pack(anchor="w")
@@ -165,7 +190,7 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         for n in PIVOTS: self.mk_btn(r, n, lambda n=n: self.ex_pivot_preset(n), "n", pady=2, padx=4, font=self.F["card"]).pack(side="left", expand=True, fill="x", padx=1)
         r = tk.Frame(f, bg=BG1); r.pack(fill="x", pady=(3, 0))
         self.mk_btn(r, "FLIP ↔", self.ex_flip, "n", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x", padx=(0, 2))
-        self.mk_btn(r, "COPY VIEW → OTHERS", self.ex_copy_view, "n", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x", padx=(0, 2))
+        self.mk_btn(r, "COPY TO ALL VIEWS", self.ex_copy_view, "n", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x", padx=(0, 2))
         self.mk_btn(r, "RESET SPOT", self.ex_reset_spot, "n", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x")
 
         # ---- right 3: motion
@@ -180,6 +205,7 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
             s = self.mk_scale(f, self.v_ex_m[key], lo, hi, lambda v: self.ex_motion_changed(), res=res_); s.config(length=300); s.pack(fill="x")
             s.bind("<ButtonRelease-1>", lambda e: self.ex_commit())
         self.mk_btn(f, "▶   SEE IT MOVE  (ANIMATE page)", lambda: self.show_page("anim"), "p", pady=6).pack(fill="x", pady=(6, 0))
+        self._ex_wheel_guard(R, right_outer)
         self.ex_set_mode("cut", refresh=False); self.ex_set_view("front", refresh=False)
 
     # ================================================================== state refresh
@@ -189,11 +215,22 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         self.ex_lb.delete(0, "end")
         for i, e in enumerate(ex):
             par = self._ex_label_of(e.parent)
-            self.ex_lb.insert("end", f"{e.name:14s} -> {par}")
+            self.ex_lb.insert("end", f"{e.name:13s} -> {par}  [{RX.views_label(e)}]")
         self.ex_sel = keep if any(e.id == keep for e in ex) else (ex[0].id if ex else None)
         if self.ex_sel:
             self.ex_lb.selection_clear(0, "end"); self.ex_lb.selection_set([e.id for e in ex].index(self.ex_sel))
-        self._ex_rebuild_parents(); self.ex_load_vars(); self.ex_redraw()
+        self._ex_rebuild_parents(); self.ex_load_vars(); self._ex_update_make_btn()
+        if self.res is not None and self._ex_hist_owner is not self.res:
+            self._ex_hist_owner = self.res; snap = RX.snapshot(ex); self._ex_hist, self._ex_hpos = [(snap, RX.snapshot_sig(snap))], 0
+        self.ex_redraw()
+
+    @add
+    def _ex_update_make_btn(self, *_):
+        e = self._ex_cur(); vs = [v.upper() for v in VIEWS if self.v_mk_views[v].get()]
+        if self.v_mk_target.get() == "add":
+            self.ex_make_btn.config(text=(f"✂   ADD TO '{e.name}'  ({', '.join(vs) or 'pick a view'})" if e else "✂   select a part first"))
+        else:
+            self.ex_make_btn.config(text=f"✂   MAKE PART  ({', '.join(vs) or 'pick a view'})")
 
     @add
     def _ex_label_of(self, key):
@@ -227,14 +264,15 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
             self.v_ex_name.set(e.name); self.v_ex_parent.set(self._ex_pdisp.get(e.parent, self._ex_label_of(e.parent)))
             vd = e.view_data(self.ex_view) or {}
             self.v_ex_layer.set(RX.LAYER_LABEL.get(vd.get("layer", "front"), LAYER_NAMES[1])); self.v_ex_show.set(bool(vd.get("show", True)))
-            self.v_ex_size.set(e.size); self.v_ex_rest.set(e.rest)
+            self.v_ex_size.set(float(vd.get("size", 1.0))); self.v_ex_rest.set(e.rest)
             m = e.motion; self.v_ex_spring.set(m.get("mode") == "spring")
             for k, v in self.v_ex_m.items(): v.set(float(m.get(k, 0.0)))
             self.v_ex_preset.set(next((n for n, p in RX.MOTION_PRESETS.items() if all(abs(float(p[k]) - float(m.get(k, 0))) < 1e-6 for k in ("freq", "damp", "inertia", "follow", "sway_amp", "sway_hz")) and p["mode"] == m.get("mode")), CUSTOM))
             sp = RX.sprite_for(e, self.ex_view, self.res.cpp)
             cm = (f"{sp.rgba.shape[1] * self.res.cpp:.0f} x {sp.rgba.shape[0] * self.res.cpp:.0f} cm") if sp is not None else "-"
             self.ex_size_lbl.config(text=f"on the body: about {cm}")
-            self.ex_sel_lbl.config(text=f"selected: {e.name}   ({self.ex_view.upper()} view)", fg=ACC)
+            self.ex_sel_lbl.config(text=f"selected: {e.name}   ({self.ex_view.upper()} view)" if vd else
+                                   f"selected: {e.name}   - no {self.ex_view.upper()} sprite yet: cut one in step 1", fg=ACC if vd else WARN)
         finally:
             self._ex_loading = False
 
@@ -250,6 +288,8 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     def ex_set_view(self, v, refresh=True):
         self.ex_view = v
         for n, b in self.ex_vbtn.items(): self.set_active(b, n == v)
+        for n in VIEWS: self.v_mk_views[n].set(n == v)           # new cuts go to the view you are looking at, nowhere else
+        if hasattr(self, "ex_make_btn"): self._ex_update_make_btn()
         if refresh: self.ex_load_vars(); self.ex_redraw()
 
     @add
@@ -318,7 +358,10 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     def _ex_draw_sprite(self):
         cv = self.ex_cv; e = self._ex_cur()
         if e is None or e.view_data(self.ex_view) is None:
-            self.ex_title.config(text=""); cv.create_text(320, 180, text="Select (or make) an extra part to set its pivot.", fill=DIM, font=self.F["h"]); return
+            self.ex_title.config(text="")
+            txt = ("Select (or make) an extra part to set its pivot." if e is None else
+                   f"'{e.name}' has no {self.ex_view.upper()} sprite yet.\nStep 1: load this view's picture, lasso the part,\nchoose 'add as a VIEW of the selected part'.")
+            cv.create_text(max(300, cv.winfo_width()) // 2, 180, text=txt, fill=DIM, font=self.F["h"], justify="center"); return
         vd = e.view_data(self.ex_view); rgba = vd["rgba"]; h, w = rgba.shape[:2]
         self.ex_title.config(text=f"{e.name} - {self.ex_view.upper()} sprite ({w} x {h} px)")
         self._ex_z = self._ex_fit(w, h, cap=24)
@@ -342,7 +385,11 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
             x, y = M + P[0] * z, M + P[1] * z; sel = (k == self.ex_sel)
             cv.create_oval(x - 8, y - 8, x + 8, y + 8, outline=PINK if sel else GOLD, width=3 if sel else 2, fill=BG0)
             cv.create_text(x + 12, y - 10, text=e.name, fill=PINK if sel else GOLD, anchor="w", font=self.F["s"])
-        if not meta.get("extras_px"):
+        e = self._ex_cur()
+        if e is not None and e.view_data(self.ex_view) is None:
+            cv.create_text(M + 8, M + 8, text=f"'{e.name}' has no {self.ex_view.upper()} sprite yet - cut one in step 1 and choose 'add as a VIEW of the selected part'.",
+                           fill=WARN, anchor="nw", font=self.F["s"])
+        elif not meta.get("extras_px"):
             cv.create_text(M + 8, M + 8, text="No extra parts visible in this view yet.", fill=DIM, anchor="nw", font=self.F["s"])
 
     # ================================================================== sources
@@ -473,6 +520,14 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         name = (self.v_mk_name.get() or "part").strip()
         parent = getattr(self, "_ex_mkmap", {}).get(self.v_mk_parent.get(), "head")
         base = 1.0 if self.ex_src_kind == "rig" else RX.auto_base_scale(cut, self.res)
+        if self.v_mk_target.get() == "add":
+            cur = self._ex_cur()
+            if cur is None: return self.toast("Select the part you want to add this view to (in the list on the right).", "warn")
+            for v in views: RX.add_view(cur, self.res, v, cut, pivot=self.v_mk_pivot.get(), base_scale=base)
+            self.ex_view = views[0]
+            for n, b in self.ex_vbtn.items(): self.set_active(b, n == self.ex_view)
+            self.ex_set_mode("place", refresh=False); self.extras_refresh(); self.ex_commit()
+            return self.toast(f"'{cur.name}' now has its own {', '.join(v.upper() for v in views)} sprite. Drag it into place.", "ok")
         e = RX.make_extra(self.res, name, parent, cut, views=views, pivot=self.v_mk_pivot.get(), base_scale=base,
                           motion=RX.default_motion(self.v_mk_motion.get()), extras=self._ex_list())
         self._ex_list().append(e); self.ex_sel = e.id; self.ex_view = views[0]
@@ -506,7 +561,8 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     def ex_slider(self, _v=None):
         e = self._ex_cur()
         if e is None or self._ex_loading: return
-        e.size = float(self.v_ex_size.get()); e.rest = float(self.v_ex_rest.get()); e.touch()
+        e.rest = float(self.v_ex_rest.get()); vd = e.view_data(self.ex_view)
+        if vd is not None: vd["size"] = float(self.v_ex_size.get()); vd.pop("_c", None)
         sp = RX.sprite_for(e, self.ex_view, self.res.cpp)
         if sp is not None: self.ex_size_lbl.config(text=f"on the body: about {sp.rgba.shape[1] * self.res.cpp:.0f} x {sp.rgba.shape[0] * self.res.cpp:.0f} cm")
         self._ex_soon()
@@ -573,8 +629,8 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
             if v == self.ex_view: continue
             off = e.views[v]["off"] if v in e.views else np.asarray(RX.default_offset(self.res, v, e.parent), float)
             lay = e.views[v].get("layer", "front") if v in e.views else vd.get("layer", "front")
-            e.set_view(v, vd["rgba"].copy(), vd["pj"].copy(), off, lay, True)
-        self.ex_commit(); self.toast("Copied this view's picture and pivot to the other views.", "ok")
+            e.set_view(v, vd["rgba"].copy(), vd["pj"].copy(), off, lay, True, bs=vd.get("bs"), size=vd.get("size"))
+        self.ex_commit(); self.toast("Copied this view's picture and pivot to the other views (same picture in every view - replace them with real cuts when you can).", "ok")
 
     @add
     def ex_reset_spot(self):
@@ -608,10 +664,13 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     @add
     def extras_key(self, ev):
         """Arrow keys nudge the pivot (step 2) or the part (step 3).  Returns True when handled."""
+        try: foc = self.focus_get()
+        except Exception: foc = None
+        if (ev.state & 0x4) and ev.keysym.lower() in ("z", "y"):
+            if isinstance(foc, (tk.Entry, ttk.Combobox, tk.Spinbox)): return False
+            (self.ex_hist_undo if ev.keysym.lower() == "z" else self.ex_hist_redo)(); return True
         if ev.keysym not in ("Left", "Right", "Up", "Down") or self.ex_mode == "cut" or self._ex_cur() is None: return False
-        try:
-            if isinstance(self.focus_get(), (tk.Entry, ttk.Combobox, tk.Spinbox, tk.Listbox)): return False
-        except Exception: pass
+        if foc is not self.ex_cv: return False                  # arrows only nudge when you are working IN the canvas
         st = 2.0 if (ev.state & 0x1) else 0.5
         dx = {"Left": -st, "Right": st}.get(ev.keysym, 0.0); dy = {"Up": -st, "Down": st}.get(ev.keysym, 0.0)
         e = self._ex_cur()
@@ -632,9 +691,34 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         self._ex_pending = False; self.ex_redraw()
 
     @add
-    def ex_commit(self):
+    def ex_commit(self, push=True):
         """Make the rig sheet / assembled figures / animation see the change, and autosave with the loadout."""
         if self.res is None: return
         try:
             G["render_outputs"](self.res); self.schedule_persist(); self.refresh_view_pages()
         except Exception as ex: self.log(f"extras: could not refresh the rig ({ex!r})", "err")
+        if push: self._ex_hist_push()
+
+    # ================================================================== undo / redo of extras edits
+    @add
+    def _ex_hist_push(self):
+        if self.res is None or self._ex_hist_owner is not self.res: return
+        snap = RX.snapshot(self._ex_list()); sig = RX.snapshot_sig(snap)
+        if self._ex_hist and self._ex_hist[self._ex_hpos][1] == sig: return
+        del self._ex_hist[self._ex_hpos + 1:]; self._ex_hist.append((snap, sig)); del self._ex_hist[:-60]; self._ex_hpos = len(self._ex_hist) - 1
+
+    @add
+    def _ex_hist_goto(self, i):
+        self._ex_hpos = i; self._ex_list()[:] = RX.restore_snapshot(self._ex_hist[i][0])
+        if not any(e.id == self.ex_sel for e in self._ex_list()): self.ex_sel = None
+        self.extras_refresh(); self.ex_commit(push=False)
+
+    @add
+    def ex_hist_undo(self):
+        if self.res is None or self._ex_hpos <= 0: return self.toast("Nothing to undo.", "warn")
+        self._ex_hist_goto(self._ex_hpos - 1); self.toast("Undone.", "ok")
+
+    @add
+    def ex_hist_redo(self):
+        if self.res is None or self._ex_hpos >= len(self._ex_hist) - 1: return self.toast("Nothing to redo.", "warn")
+        self._ex_hist_goto(self._ex_hpos + 1); self.toast("Redone.", "ok")

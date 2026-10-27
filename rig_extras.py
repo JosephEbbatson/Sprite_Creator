@@ -79,22 +79,19 @@ class Extra:
         self.views = {}                     # view -> dict(rgba, pj, off, layer, show)
 
     def view_data(self, view):
-        if view in self.views: return self.views[view]
-        for v in BORROW[view]:
-            if v in self.views: return self.views[v]
-        return None
+        """Exactly this view's sprite, or None.  Views are NEVER borrowed from each other: a belly cut for the front
+        must not appear in the side or back view - every view needs its own cut."""
+        return self.views.get(view)
 
-    def set_view(self, view, rgba, pj, off, layer="front", show=True):
+    def set_view(self, view, rgba, pj, off, layer="front", show=True, bs=None, size=None):
+        """bs = picture-pixels -> rig-pixels factor of this view's source, size = the user's SIZE multiplier (per view)."""
         self.views[view] = dict(rgba=np.ascontiguousarray(rgba, np.uint8), pj=np.asarray(pj, float),
-                                off=np.asarray(off, float), layer=layer, show=bool(show))
+                                off=np.asarray(off, float), layer=layer, show=bool(show),
+                                bs=float(self.base_scale if bs is None else bs), size=float(1.0 if size is None else size))
 
     def touch(self, view=None):
         for v in ([view] if view else list(self.views)):
             if v in self.views: self.views[v].pop("_c", None)
-
-    @property
-    def scale(self):
-        return self.base_scale * self.size
 
 
 # ---------------------------------------------------------------------------------------------- cutting
@@ -195,7 +192,7 @@ def sprite_for(e, view, cpp=2.0):
     Returns SimpleNamespace(rgba, pj, pe, lever_cm, up) or None.  Cached on the view data."""
     vd = e.view_data(view)
     if vd is None: return None
-    s = e.scale
+    s = float(vd.get("bs", e.base_scale)) * float(vd.get("size", 1.0))
     c = vd.get("_c")
     if c is not None and c[0] == s and c[1] == cpp: return c[2]
     rgba, sx, sy = _resample(vd["rgba"], s)
@@ -265,8 +262,47 @@ def make_extra(res, name, parent, rgba, views=VIEWS, pivot="center", base_scale=
     for v in views:
         lay = layer
         if v == "back" and layer == "front" and parent in CENTER and parent in ("chest", "abdomen"): lay = "front"
-        e.set_view(v, rgba, pj, default_offset(res, v, parent) if res is not None else (0, 0), lay, True)
+        e.set_view(v, rgba, pj, default_offset(res, v, parent) if res is not None else (0, 0), lay, True, bs=base_scale)
     return e
+
+
+def add_view(e, res, view, rgba, pivot="center", base_scale=1.0, layer="front"):
+    """Give an existing extra its own sprite for `view` (replacing that view's sprite if it had one).
+    Name, parent, motion and the other views are untouched."""
+    old = e.views.get(view)
+    pj = pivot_choices(rgba)[pivot] if isinstance(pivot, str) else pivot
+    off = old["off"] if old is not None else default_offset(res, view, e.parent)
+    e.set_view(view, rgba, pj, off, old.get("layer", layer) if old else layer, True, bs=base_scale, size=old.get("size", 1.0) if old else 1.0)
+
+
+def views_label(e):
+    """'F S -' : which views have their own sprite."""
+    return " ".join(v[0].upper() if v in e.views else "-" for v in VIEWS)
+
+
+def snapshot(extras):
+    """Cheap copy of the whole editable state (pixel arrays are shared: they are never changed in place)."""
+    return [dict(id=e.id, name=e.name, parent=e.parent, rest=float(e.rest), motion=dict(e.motion), twin=e.twin,
+                 base_scale=e.base_scale, size=e.size,
+                 views={v: dict(rgba=d["rgba"], pj=np.array(d["pj"], float), off=np.array(d["off"], float), layer=d.get("layer", "front"),
+                                show=bool(d.get("show", True)), bs=d.get("bs"), size=d.get("size", 1.0)) for v, d in e.views.items()})
+            for e in extras]
+
+
+def snapshot_sig(snap):
+    return tuple((s["id"], s["name"], s["parent"], round(s["rest"], 4), tuple(sorted(s["motion"].items())), s["twin"],
+                  tuple((v, id(d["rgba"]), tuple(np.round(d["pj"], 3)), tuple(np.round(d["off"], 3)), d["layer"], d["show"], d["bs"], d["size"])
+                        for v, d in sorted(s["views"].items()))) for s in snap)
+
+
+def restore_snapshot(snap):
+    out = []
+    for s in snap:
+        e = Extra(s["id"], s["name"], s["parent"], s["size"], s["base_scale"], s["rest"], s["motion"], s["twin"])
+        for v, d in s["views"].items():
+            e.set_view(v, d["rgba"], d["pj"].copy(), d["off"].copy(), d["layer"], d["show"], bs=d["bs"], size=d["size"])
+        out.append(e)
+    return out
 
 
 def flip_view(e, view):
@@ -285,8 +321,7 @@ def mirror_extra(e, extras):
         if p is not None and p.twin: twin_parent = p.twin
     name = e.name + ("_L" if e.name.endswith("_R") is False and not e.name.endswith("_L") else "")
     name = (e.name[:-2] + "_L") if e.name.endswith("_R") else ((e.name[:-2] + "_R") if e.name.endswith("_L") else e.name + "_twin")
-    n = Extra(new_id(extras, name), name, twin_parent, size=e.size, base_scale=e.base_scale, rest=-e.rest,
-              motion=e.motion, twin=e.id)
+    n = Extra(new_id(extras, name), name, twin_parent, base_scale=e.base_scale, rest=-e.rest, motion=e.motion, twin=e.id)
     e.twin = n.id
     for v, vd in e.views.items():
         rgba, pj, off = vd["rgba"], np.asarray(vd["pj"], float), np.asarray(vd["off"], float)
@@ -295,15 +330,15 @@ def mirror_extra(e, extras):
             rgba = np.ascontiguousarray(rgba[:, ::-1]); pj = np.array([w - pj[0], pj[1]]); off = np.array([-off[0], off[1]])
         show = vd.get("show", True)
         if v == "side" and e.parent in CENTER: show = False          # the far ear/horn is hidden behind the head in profile
-        n.set_view(v, rgba, pj, off, vd.get("layer", "front"), show)
+        n.set_view(v, rgba, pj, off, vd.get("layer", "front"), show, bs=vd.get("bs"), size=vd.get("size"))
     return n
 
 
 def duplicate_extra(e, extras):
     name = e.name + "_copy"
-    n = Extra(new_id(extras, name), name, e.parent, size=e.size, base_scale=e.base_scale, rest=e.rest, motion=e.motion)
+    n = Extra(new_id(extras, name), name, e.parent, base_scale=e.base_scale, rest=e.rest, motion=e.motion)
     for v, vd in e.views.items():
-        n.set_view(v, vd["rgba"].copy(), vd["pj"].copy(), np.asarray(vd["off"], float) + np.array([3.0, 3.0]), vd.get("layer", "front"), vd.get("show", True))
+        n.set_view(v, vd["rgba"].copy(), vd["pj"].copy(), np.asarray(vd["off"], float) + np.array([3.0, 3.0]), vd.get("layer", "front"), vd.get("show", True), bs=vd.get("bs"), size=vd.get("size"))
     return n
 
 
@@ -339,14 +374,14 @@ def save_extras(folder, extras):
     src.mkdir(parents=True, exist_ok=True)
     keep, out = set(), []
     for e in extras:
-        d = dict(id=e.id, name=e.name, parent=e.parent, size=round(e.size, 4), base_scale=round(e.base_scale, 5),
-                 rest=round(e.rest, 3), motion=dict(e.motion), twin=e.twin, views={})
+        d = dict(id=e.id, name=e.name, parent=e.parent, rest=round(e.rest, 3), motion=dict(e.motion), twin=e.twin, views={})
         for v, vd in e.views.items():
             fn = f"{e.id}_{v}.png"; keep.add(fn); h = _crc(vd["rgba"]); p = src / fn
             if vd.get("_h") != h or not p.exists():
                 Image.fromarray(vd["rgba"]).save(p); vd["_h"] = h
             d["views"][v] = dict(file=fn, pj=[round(float(x), 3) for x in vd["pj"]], off=[round(float(x), 3) for x in vd["off"]],
-                                 layer=vd.get("layer", "front"), show=bool(vd.get("show", True)))
+                                 layer=vd.get("layer", "front"), show=bool(vd.get("show", True)),
+                                 bs=round(float(vd.get("bs", e.base_scale)), 5), size=round(float(vd.get("size", 1.0)), 4))
         out.append(d)
     for p in src.glob("*.png"):
         if p.name not in keep: p.unlink()
@@ -362,7 +397,8 @@ def load_extras(folder, meta):
             for v, vd in (d.get("views") or {}).items():
                 p = Path(folder) / "src" / vd["file"]
                 if not p.exists(): continue
-                e.set_view(v, np.array(Image.open(p).convert("RGBA")), vd["pj"], vd["off"], vd.get("layer", "front"), vd.get("show", True))
+                e.set_view(v, np.array(Image.open(p).convert("RGBA")), vd["pj"], vd["off"], vd.get("layer", "front"), vd.get("show", True),
+                           bs=vd.get("bs", e.base_scale), size=vd.get("size", e.size))
             if e.views: out.append(e)
         except Exception:
             continue
@@ -385,8 +421,8 @@ def export_extras(res, folder):
             fn = f"{e.id}_{v}.png"; Image.fromarray(spr.rgba).save(folder / fn)
             views[v] = dict(file=f"extras/{fn}", pivot_px=[round(float(x), 2) for x in spr.pj],
                             offset_cm=[round(float(x), 2) for x in vd["off"]], layer=vd.get("layer", "front"),
-                            visible=bool(vd.get("show", True)))
-        info[e.id] = dict(name=e.name, parent=e.parent, size=round(e.size, 3), rest_angle_deg=round(e.rest, 2),
+                            visible=bool(vd.get("show", True)), size=round(float(vd.get("size", 1.0)), 3))
+        info[e.id] = dict(name=e.name, parent=e.parent, rest_angle_deg=round(e.rest, 2),
                           motion=dict(e.motion), twin=e.twin, views=views)
     return info
 
