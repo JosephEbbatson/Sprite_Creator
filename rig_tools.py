@@ -89,6 +89,62 @@ def fill_holes(rgba, max_frac=0.25):
         return rgba
 
 
+def close_gaps(rgba, win_frac=0.35, max_frac=0.35):
+    """Close what a covering part (an arm lying over the torso in a SIDE view, the near leg over the far one) left behind.
+    enclosed_holes() only finds holes that are sealed on every side; this also fills
+      * gaps that are bounded on both sides along a row or a column (even when the covering part ran the full width), and
+      * 'bites' out of the silhouette edge that are shorter than win_frac of the part's height,
+    with colours grown in from the surrounding pixels.  Real shape (waist, shoulders) is kept because only narrow dents
+    are closed, and nothing is changed when it would add more than max_frac of the part's area."""
+    try:
+        from scipy.ndimage import minimum_filter1d, maximum_filter1d
+        op = rgba[..., 3] > 0; h, w = op.shape
+        if op.sum() < 12 or h < 5 or w < 3: return rgba
+        target = np.zeros_like(op)
+        # 1. a gap is only a hidden area when it is bounded along the row AND along the column (open notches such as a
+        #    waist are real shape and are left to the dent test below)
+        both = []
+        for arr, lim in ((op, 0.6 * w), (op.T, 0.6 * h)):
+            t = np.zeros_like(arr)
+            for i in range(arr.shape[0]):
+                xs = np.nonzero(arr[i])[0]
+                for g in (np.nonzero(np.diff(xs) > 1)[0] if len(xs) > 1 else []):
+                    a_, b_ = xs[g] + 1, xs[g + 1]
+                    if b_ - a_ <= lim: t[i, a_:b_] = True
+            both.append(t)
+        target |= both[0] & both[1].T
+        # 2. dents in the left / right outline
+        rows = np.nonzero(op.any(1))[0]
+        if len(rows) >= 5:
+            l = np.array([np.nonzero(op[y])[0].min() if op[y].any() else np.nan for y in range(h)], float)
+            r = np.array([np.nonzero(op[y])[0].max() if op[y].any() else np.nan for y in range(h)], float)
+            y0, y1 = rows.min(), rows.max(); idx = np.arange(y0, y1 + 1)
+            ok = ~np.isnan(l[idx]); lv = np.interp(idx, idx[ok], l[idx][ok]); rv = np.interp(idx, idx[ok], r[idx][ok])
+            win = max(3, int(win_frac * (y1 - y0 + 1))) | 1
+            l2 = maximum_filter1d(minimum_filter1d(lv, win, mode="nearest"), win, mode="nearest")
+            r2 = minimum_filter1d(maximum_filter1d(rv, win, mode="nearest"), win, mode="nearest")
+            empty = np.array([not op[y].any() for y in idx])               # rows the covering part hid completely
+            if empty.any() and empty.sum() <= 0.5 * len(idx):
+                xs_ = np.arange(w)[None, :]
+                target[y0:y1 + 1] |= empty[:, None] & (xs_ >= np.floor(lv)[:, None]) & (xs_ <= np.ceil(rv)[:, None])
+            xs = np.arange(w)[None, :]; thr = max(2.0, 0.15 * w)       # only real bites, not the gentle curve of a waist
+            dl, dr = (lv - l2) >= thr, (r2 - rv) >= thr
+            lo_x = np.where(dl, np.floor(l2), np.ceil(lv)); hi_x = np.where(dr, np.ceil(r2), np.floor(rv))
+            target[y0:y1 + 1] |= (xs >= lo_x[:, None]) & (xs <= hi_x[:, None])
+        target &= ~op
+        if not target.any() or target.sum() > max_frac * op.sum(): return rgba
+        col, filled = inpaint(rgba[..., :3], op, target)
+        out = rgba.copy(); out[..., :3] = np.where(filled[..., None], col, out[..., :3]); out[..., 3] = np.where(filled, 255, out[..., 3])
+        return out
+    except Exception:
+        return rgba
+
+
+def fill_gaps(rgba):
+    """fill_holes + close_gaps: the one call the cutter uses for 'Fill hidden areas'."""
+    return close_gaps(fill_holes(rgba))
+
+
 def rig_check(res):
     """List what is weak in a cut rig.  Each item: dict(sev=0 bad/1 warn/2 info, view, key, msg)."""
     items = []

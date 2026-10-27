@@ -1,6 +1,6 @@
 """rig_trim_gui.py - the TRIM page for the HUMAN.RIG window (installed into RigWindow by install()).
 
-Erase leftover pixels from a finished part, and see the effect on the assembled figure in a test pose
+Erase leftover pixels from a finished part (or PAINT them over with a colour - hair on an arm -> skin tone), and see the effect on the assembled figure in a test pose
 (arms up, legs apart) at the same time.  Erased pixels show as a red ghost in the edit view; the RESTORE brush
 paints them back.  Trims are remembered per view and part and survive CUTting again (see rig_trim.py).
 """
@@ -20,7 +20,11 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     TOOLS = (("erase", "ERASE BRUSH", "paint over pixels to remove them"),
              ("restore", "RESTORE BRUSH", "paint over red ghost pixels to bring them back"),
              ("lasso_erase", "ERASE INSIDE SHAPE", "click around an area, close the shape: everything inside goes"),
-             ("lasso_keep", "KEEP ONLY INSIDE SHAPE", "click around what you want to keep: everything outside goes"))
+             ("lasso_keep", "KEEP ONLY INSIDE SHAPE", "click around what you want to keep: everything outside goes"),
+             ("paint", "PAINT BRUSH", "paint with the colour chosen below - over hair on skin, over a gap, anywhere inside the part's box"),
+             ("lasso_paint", "PAINT INSIDE SHAPE", "click around an area, close the shape: it is filled with the chosen colour"),
+             ("pick", "EYEDROPPER", "click a pixel to take its colour (also: hold Alt while clicking with any tool)"))
+    PAINT_TOOLS = ("paint", "lasso_paint")
 
     def add(fn):
         setattr(cls, fn.__name__, fn); return fn
@@ -30,6 +34,7 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     def build_trim(self, page):
         self.tr_view, self.tr_key = "front", "uarmR"
         self.v_tr_tool, self.v_tr_size, self.v_tr_pose = tk.StringVar(value="erase"), tk.DoubleVar(value=1.5), tk.StringVar(value="arms")
+        self.v_tr_col = tk.StringVar(value="#e0a47a")
         self.tr_zoom_mult, self.tr_pts, self.tr_closed = 1.0, [], False
         self.tr_undo, self.tr_redo, self._tr_last, self._tr_z = [], [], None, 1.0
         self._tr_photo = self._tr_pphoto = None; self._tr_prev_pending = False; self._tr_keys = []; self._tr_cursor = None
@@ -65,6 +70,12 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         for val, txt, _tip in TOOLS:
             tk.Radiobutton(f, text=txt, value=val, variable=self.v_tr_tool, command=self.tr_tool_changed, bg=BG1, fg=TEXT, selectcolor=BG0,
                            activebackground=BG1, activeforeground=ACC, font=self.F["s"], anchor="w", highlightthickness=0).pack(fill="x")
+        cr = tk.Frame(f, bg=BG1); cr.pack(fill="x", pady=(6, 0))
+        self.mk_label(cr, "PAINT COLOUR").pack(side="left")
+        self.tr_sw = tk.Label(cr, text="      ", bg=self.v_tr_col.get(), highlightthickness=2, highlightbackground=LINE2, cursor="hand2")
+        self.tr_sw.pack(side="left", padx=6); self.tr_sw.bind("<Button-1>", lambda e: self.tr_choose_colour())
+        self.mk_btn(cr, "PICK...", self.tr_choose_colour, "n", pady=2, padx=8, font=self.F["card"]).pack(side="left")
+        self.tr_chips = tk.Frame(f, bg=BG1); self.tr_chips.pack(fill="x", pady=(3, 0))
         self.mk_label(f, "BRUSH SIZE  (pixels)").pack(anchor="w", pady=(4, 0))
         s = self.mk_scale(f, self.v_tr_size, 0.5, 8.0, lambda v: self.tr_hover(None), res=0.5); s.config(length=320); s.pack(fill="x")
         r = tk.Frame(f, bg=BG1); r.pack(fill="x", pady=(4, 0))
@@ -74,7 +85,7 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         self.mk_btn(r, "RESET THIS PART", self.tr_reset_part, "d", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x", padx=(0, 2))
         self.mk_btn(r, "RESET EVERYTHING", self.tr_reset_all, "d", pady=3, font=self.F["card"]).pack(side="left", expand=True, fill="x")
         self.tr_tip = self.mk_label(f, "", DIM, wraplength=320, justify="left"); self.tr_tip.pack(anchor="w", pady=(4, 0))
-        self.mk_label(f, "Keys: Ctrl+Z undo, Ctrl+Y redo, [ and ] change brush size. Nothing is destroyed: the raw cut is kept and RESTORE brings pixels back.",
+        self.mk_label(f, "Keys: Ctrl+Z undo, Ctrl+Y redo, [ and ] change brush size. Nothing is destroyed: the raw cut is kept and RESTORE brings erased AND painted pixels back to the original.",
                       DIM, wraplength=320, justify="left").pack(anchor="w", pady=(4, 0))
         if hasattr(self, "_ex_wheel_guard"): self._ex_wheel_guard(R, right_outer)
         self.tr_set_view("front", refresh=False); self.tr_set_pose("arms", refresh=False); self.tr_tool_changed()
@@ -92,7 +103,30 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
 
     @add
     def trim_refresh(self, *_):
-        self._tr_fill_list(); self.tr_redraw()
+        self._tr_fill_list(); self.tr_chips_fill(); self.tr_redraw()
+
+    @add
+    def tr_chips_fill(self):
+        for c in self.tr_chips.winfo_children(): c.destroy()
+        pal = list(getattr(self.res, "palette", None) or [])[:18] if self.res is not None else []
+        for col in pal:
+            hx = "#%02x%02x%02x" % tuple(int(x) for x in col)
+            b = tk.Label(self.tr_chips, text="  ", bg=hx, highlightthickness=1, highlightbackground=LINE, cursor="hand2")
+            b.pack(side="left", padx=1, pady=1); b.bind("<Button-1>", lambda e, hx=hx: self.tr_set_colour(hx))
+
+    @add
+    def tr_set_colour(self, hx):
+        self.v_tr_col.set(hx); self.tr_sw.config(bg=hx)
+
+    @add
+    def tr_choose_colour(self):
+        from tkinter import colorchooser
+        c = colorchooser.askcolor(color=self.v_tr_col.get(), parent=self, title="Paint colour")
+        if c and c[1]: self.tr_set_colour(c[1])
+
+    @add
+    def _tr_rgb(self):
+        h = self.v_tr_col.get().lstrip("#"); return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
     @add
     def _tr_fill_list(self):
@@ -101,9 +135,10 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         active = set(G["RB"].active_keys(getattr(self.res, "mask", None)))
         for k in PART_KEYS:
             if k not in active: continue
-            n = TRM.count(self.res, self.tr_view, k); self._tr_keys.append(k)
-            self.tr_lb.insert("end", f"{G['pretty'](k):10s} {str(n) + ' px erased' if n else ''}")
-            self.tr_lb.itemconfig(len(self._tr_keys) - 1, fg=GOLD if n else TEXT)
+            n = TRM.count(self.res, self.tr_view, k); np_ = TRM.paint_count(self.res, self.tr_view, k); self._tr_keys.append(k)
+            note = ", ".join(t for t in ((f"{n} erased" if n else ""), (f"{np_} painted" if np_ else "")) if t)
+            self.tr_lb.insert("end", f"{G['pretty'](k):10s} {note}")
+            self.tr_lb.itemconfig(len(self._tr_keys) - 1, fg=GOLD if (n or np_) else TEXT)
         if self.tr_key in self._tr_keys:
             self.tr_lb.selection_clear(0, "end"); self.tr_lb.selection_set(self._tr_keys.index(self.tr_key))
 
@@ -146,10 +181,10 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         if not self._tr_ok():
             cv.create_text(max(300, cv.winfo_width()) // 2, 180, text=f"{G['pretty'](self.tr_key)} has no cut in the {self.tr_view.upper()} view\n(it is missing, switched off, or only a placeholder).", fill=DIM, font=self.F["h"], justify="center")
             self.tr_title.config(text="TRIM"); preview(); return
-        raw = self._tr_raw(); h, w = raw.rgba.shape[:2]; offs = TRM.offsets(self.res, self.tr_view, self.tr_key)
+        raw = self._tr_raw(); h, w = raw.rgba.shape[:2]; offs = TRM.offsets(self.res, self.tr_view, self.tr_key); pnt = TRM.paints(self.res, self.tr_view, self.tr_key)
         cw, ch = max(300, cv.winfo_width()), max(300, cv.winfo_height())
         self._tr_z = z = max(1.0, min((cw - 2 * M) / w, (ch - 2 * M) / h, 40.0)) * self.tr_zoom_mult
-        bg = Image.new("RGBA", (w, h), (28, 32, 42, 255)); bg.alpha_composite(Image.fromarray(raw.rgba)); arr = np.array(bg)
+        bg = Image.new("RGBA", (w, h), (28, 32, 42, 255)); bg.alpha_composite(Image.fromarray(TRM.trimmed_rgba(raw, set(), pnt))); arr = np.array(bg)
         m = TRM.erased_mask((h, w), raw, offs) & (raw.rgba[..., 3] > 0)
         if m.any(): arr[m, :3] = (arr[m, :3] * 0.35 + np.array([255, 50, 50]) * 0.65).astype(np.uint8)
         im = Image.fromarray(arr).convert("RGB").resize((max(1, int(w * z)), max(1, int(h * z))), Image.Resampling.NEAREST)
@@ -157,8 +192,8 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         px, py = M + raw.pj[0] * z, M + raw.pj[1] * z
         cv.create_line(px - 10, py, px + 10, py, fill=PINK); cv.create_line(px, py - 10, px, py + 10, fill=PINK)
         self._tr_draw_poly()
-        n = len(offs); self.tr_title.config(text=f"TRIM - {G['pretty'](self.tr_key)}  ({self.tr_view.upper()})   {n} px erased" if n else f"TRIM - {G['pretty'](self.tr_key)}  ({self.tr_view.upper()})")
-        self.tr_hint.config(text="Red = erased (RESTORE brings it back). The pink cross is the part's pivot: the point it rotates about. "
+        n = len(offs) + len(pnt); self.tr_title.config(text=f"TRIM - {G['pretty'](self.tr_key)}  ({self.tr_view.upper()})   {len(offs)} erased, {len(pnt)} painted" if n else f"TRIM - {G['pretty'](self.tr_key)}  ({self.tr_view.upper()})")
+        self.tr_hint.config(text="Red = erased (RESTORE brings it back; painted pixels show in their new colour). The pink cross is the part's pivot: the point it rotates about. "
                                  "Use the preview on the right to see what shows when the limb moves.")
         preview()
 
@@ -174,9 +209,9 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     @add
     def tr_hover(self, e):
         cv = self.tr_cv; cv.delete("cursor")
-        if e is None or self.v_tr_tool.get() not in ("erase", "restore") or not self._tr_ok(): return
-        r = max(0.5, float(self.v_tr_size.get())) * self._tr_z
-        cv.create_oval(e.x - r, e.y - r, e.x + r, e.y + r, outline=GOOD if self.v_tr_tool.get() == "restore" else BAD, width=2, tags="cursor")
+        if e is None or self.v_tr_tool.get() not in ("erase", "restore", "paint") or not self._tr_ok(): return
+        r = max(0.5, float(self.v_tr_size.get())) * self._tr_z; t = self.v_tr_tool.get()
+        cv.create_oval(e.x - r, e.y - r, e.x + r, e.y + r, outline=GOOD if t == "restore" else self.v_tr_col.get() if t == "paint" else BAD, width=2, tags="cursor")
 
     @add
     def _tr_draw_preview(self):
@@ -207,23 +242,41 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
 
     @add
     def _tr_push_undo(self):
-        self.tr_undo.append((self.tr_view, self.tr_key, set(TRM.offsets(self.res, self.tr_view, self.tr_key)))); self.tr_redo = []
+        self.tr_undo.append((self.tr_view, self.tr_key, TRM.get_state(self.res, self.tr_view, self.tr_key))); self.tr_redo = []
         del self.tr_undo[:-80]
 
     @add
-    def _tr_set(self, offs):
-        TRM.set_offsets(self.res, self.tr_view, self.tr_key, offs)
+    def _tr_set(self, state):
+        TRM.set_state(self.res, self.tr_view, self.tr_key, state)
+
+    @add
+    def _tr_apply_tool(self, t, raw, mask):
+        st = TRM.get_state(self.res, self.tr_view, self.tr_key)
+        if t == "erase": st = TRM.erase_state(st, raw, mask)
+        elif t == "restore": st = TRM.restore_state(st, raw, mask)
+        elif t in ("paint", "lasso_paint"): st = TRM.paint_state(st, raw, mask, self._tr_rgb())
+        elif t == "lasso_erase": st = TRM.erase_state(st, raw, mask)
+        elif t == "lasso_keep": st = TRM.keep_only_state(st, raw, mask)
+        self._tr_set(st)
+
+    @add
+    def _tr_eyedrop(self, e):
+        raw = self._tr_raw(); p = self._tr_pt(e); x, y = int(p[0]), int(p[1])
+        pnt = TRM.paints(self.res, self.tr_view, self.tr_key); arr = TRM.trimmed_rgba(raw, set(), pnt)
+        if 0 <= y < arr.shape[0] and 0 <= x < arr.shape[1] and arr[y, x, 3] > 0:
+            self.tr_set_colour("#%02x%02x%02x" % tuple(int(c) for c in arr[y, x, :3]))
+        else: self.toast("That pixel is empty - click on a coloured one to take its colour.", "warn")
 
     @add
     def tr_press(self, e):
         self.tr_cv.focus_set()
         if self.res is None or not self._tr_ok(): return
         t = self.v_tr_tool.get(); raw = self._tr_raw()
-        if t in ("erase", "restore"):
+        if t == "pick" or (e.state & 0x20000 and t not in ("lasso_erase", "lasso_keep", "lasso_paint")): return self._tr_eyedrop(e)
+        if t in ("erase", "restore", "paint"):
             self._tr_push_undo(); p = self._tr_pt(e); self._tr_last = p
             m = TRM.brush_mask(raw.rgba.shape[:2], p[0], p[1], float(self.v_tr_size.get()))
-            offs = TRM.offsets(self.res, self.tr_view, self.tr_key)
-            self._tr_set(TRM.erase(offs, raw, m) if t == "erase" else TRM.restore(offs, raw, m)); self.tr_redraw(fast=True)
+            self._tr_apply_tool(t, raw, m); self.tr_redraw(fast=True)
         else:
             if self.tr_closed: return
             z = self._tr_z
@@ -236,8 +289,7 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
         if self._tr_last is None or not self._tr_ok(): return
         t = self.v_tr_tool.get(); raw = self._tr_raw(); p = self._tr_pt(e)
         m = TRM.stroke_mask(raw.rgba.shape[:2], self._tr_last, p, float(self.v_tr_size.get())); self._tr_last = p
-        offs = TRM.offsets(self.res, self.tr_view, self.tr_key)
-        self._tr_set(TRM.erase(offs, raw, m) if t == "erase" else TRM.restore(offs, raw, m)); self.tr_redraw(fast=True)
+        self._tr_apply_tool(t, raw, m); self.tr_redraw(fast=True)
 
     @add
     def tr_release(self, e):
@@ -257,9 +309,8 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     @add
     def tr_close(self):
         if len(self.tr_pts) < 3: return self.toast("Click at least 3 points around the area first.", "warn")
-        raw = self._tr_raw(); m = TRM.polygon_mask(raw.rgba.shape[:2], self.tr_pts); offs = TRM.offsets(self.res, self.tr_view, self.tr_key)
-        self._tr_push_undo()
-        self._tr_set(TRM.erase(offs, raw, m) if self.v_tr_tool.get() == "lasso_erase" else TRM.keep_only(offs, raw, m))
+        raw = self._tr_raw(); m = TRM.polygon_mask(raw.rgba.shape[:2], self.tr_pts)
+        self._tr_push_undo(); self._tr_apply_tool(self.v_tr_tool.get(), raw, m)
         self.tr_pts, self.tr_closed = [], False; self._tr_fill_list(); self.tr_commit(); self.tr_redraw()
 
     @add
@@ -277,29 +328,31 @@ def install(cls, G, K, tk, ttk, ImageTk, filedialog, messagebox):
     @add
     def tr_do_undo(self):
         if not self.tr_undo: return self.toast("Nothing to undo.", "warn")
-        v, k, offs = self.tr_undo.pop(); self._tr_jump(v, k)
-        self.tr_redo.append((v, k, set(TRM.offsets(self.res, v, k)))); TRM.set_offsets(self.res, v, k, offs)
+        v, k, st = self.tr_undo.pop(); self._tr_jump(v, k)
+        self.tr_redo.append((v, k, TRM.get_state(self.res, v, k))); TRM.set_state(self.res, v, k, st)
         self._tr_fill_list(); self.tr_commit(); self.tr_redraw()
 
     @add
     def tr_do_redo(self):
         if not self.tr_redo: return self.toast("Nothing to redo.", "warn")
-        v, k, offs = self.tr_redo.pop(); self._tr_jump(v, k)
-        self.tr_undo.append((v, k, set(TRM.offsets(self.res, v, k)))); TRM.set_offsets(self.res, v, k, offs)
+        v, k, st = self.tr_redo.pop(); self._tr_jump(v, k)
+        self.tr_undo.append((v, k, TRM.get_state(self.res, v, k))); TRM.set_state(self.res, v, k, st)
         self._tr_fill_list(); self.tr_commit(); self.tr_redraw()
 
     @add
     def tr_reset_part(self):
         if self.res is None or not self._tr_ok(): return
-        if not TRM.count(self.res, self.tr_view, self.tr_key): return self.toast("This part has no erased pixels.", "warn")
-        self._tr_push_undo(); self._tr_set(set()); self._tr_fill_list(); self.tr_commit(); self.tr_redraw()
+        if not (TRM.count(self.res, self.tr_view, self.tr_key) or TRM.paint_count(self.res, self.tr_view, self.tr_key)):
+            return self.toast("This part has no erased or painted pixels.", "warn")
+        self._tr_push_undo(); self._tr_set((set(), {})); self._tr_fill_list(); self.tr_commit(); self.tr_redraw()
 
     @add
     def tr_reset_all(self):
-        if self.res is None or not TRM.count(self.res): return self.toast("Nothing is trimmed yet.", "warn")
-        if not messagebox.askyesno("Reset everything", f"Bring back all {TRM.count(self.res)} erased pixels in every part and view?\n(this cannot be undone)", parent=self): return
-        for v, parts in list((self.res.trims or {}).items()):
-            for k in list(parts): TRM.set_offsets(self.res, v, k, set())
+        total = (TRM.count(self.res) + TRM.paint_count(self.res)) if self.res is not None else 0
+        if not total: return self.toast("Nothing is trimmed or painted yet.", "warn")
+        if not messagebox.askyesno("Reset everything", f"Undo all {total} erased and painted pixels in every part and view?\n(this cannot be undone)", parent=self): return
+        pairs = {(v, k) for v, parts in (self.res.trims or {}).items() for k in parts} | {(v, k) for v, parts in (getattr(self.res, "paints", None) or {}).items() for k in parts}
+        for v, k in pairs: TRM.set_offsets(self.res, v, k, set(), {})
         self.tr_undo, self.tr_redo = [], []; self._tr_fill_list(); self.tr_commit(); self.tr_redraw()
 
     @add

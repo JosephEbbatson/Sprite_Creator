@@ -1050,7 +1050,7 @@ def cut_rig(frames, H, cpp=CM_PER_PX, mirror=True, gapfill=True, ncolors=32, ath
                 else: img, nused = fuse_candidates(cs, blend, gapfill); best, kind = cs[0], "own"
             except Exception as e:
                 issues.append(f"{v}/{k}: blending failed ({e!r})"); img, nused, best, kind = cs[0]["img"].copy(), 1, cs[0], "own"
-            sp = sprite_from_img(k, (RT.fill_holes(smooth_sprite(img, smooth)) if fill_hidden else smooth_sprite(img, smooth)), best, L, cpp, nused, kind)
+            sp = sprite_from_img(k, (RT.fill_gaps(smooth_sprite(img, smooth)) if fill_hidden else smooth_sprite(img, smooth)), best, L, cpp, nused, kind)
             if sp is not None:
                 chosen[v][k] = sp
                 log(f"{v:5s} {k:8s} <- {nused} frame(s) score {sp.score:.2f}{'  [locked]' if kind == 'locked' else ''}")
@@ -1495,7 +1495,7 @@ class Loadout:
             self.meta["widths"] = {k:round(float(x),3) for k,x in res.widths.items()}
             self.meta["mask"] = {k: bool(v) for k, v in RB.normalize_mask(getattr(res, "mask", None)).items()}
             self.meta["scale"] = {k: round(float(v), 3) for k, v in RB.normalize_scale(getattr(res, "scale", None)).items()}
-            self.meta["trims"] = TRM.to_meta(res)
+            self.meta["trims"] = TRM.to_meta(res); self.meta["paints"] = TRM.paints_to_meta(res)
             self.meta["extras"] = RX.save_extras(self.path/"extras", getattr(res, "extras", None) or [])
             ex_info = RX.export_extras(res, self.path/"extras")
             rig = dict(name=self.name, height_cm=self.meta["height_cm"], cm_per_px=self.meta["cm_per_px"],
@@ -1606,7 +1606,7 @@ class Loadout:
         res.mask = RB.normalize_mask(self.meta.get("mask"))
         res.scale = RB.normalize_scale(self.meta.get("scale"))
         res.extras = RX.load_extras(self.path/"extras", self.meta.get("extras"))
-        res.trims = TRM.from_meta(self.meta.get("trims"))
+        res.trims = TRM.from_meta(self.meta.get("trims")); res.paints = TRM.paints_from_meta(self.meta.get("paints"))
         res.corpse = self.load_corpse()
         finalize_views(res); render_outputs(res)
         return res
@@ -2458,7 +2458,7 @@ def _build_gui_class(standalone=False):
             v, k = self.guide_view, self.guide_key
             c = next((c for c in self.g_cands() if c["cid"] == cid), None)
             if c is None: return
-            sp = sprite_from_img(k, RT.fill_holes(smooth_sprite(c["img"], getattr(self.res, "smooth", 2))), c, self.res.lengths, self.res.cpp, 1, "locked")
+            sp = sprite_from_img(k, RT.fill_gaps(smooth_sprite(c["img"], getattr(self.res, "smooth", 2))), c, self.res.lengths, self.res.cpp, 1, "locked")
             if sp is None: return
             self.locks.setdefault(v, {})[k] = cid
             self._apply_choice(v, k, sp)
@@ -2478,7 +2478,7 @@ def _build_gui_class(standalone=False):
             v, k = self.guide_view, self.guide_key
             self.locks.get(v, {}).pop(k, None); cands = self.g_cands()
             if cands:
-                sp = sprite_from_img(k, RT.fill_holes(smooth_sprite(cands[0]["img"], getattr(self.res, "smooth", 2))), cands[0], self.res.lengths, self.res.cpp, 1, "own")
+                sp = sprite_from_img(k, RT.fill_gaps(smooth_sprite(cands[0]["img"], getattr(self.res, "smooth", 2))), cands[0], self.res.lengths, self.res.cpp, 1, "own")
                 if sp is not None: self._apply_choice(v, k, sp)
             else:
                 self.res.chosen[v].pop(k, None); finalize_views(self.res); render_outputs(self.res); self.schedule_persist()
@@ -2889,6 +2889,7 @@ def _build_gui_class(standalone=False):
                 lo = self.ensure_loadout(); res.name = lo.name
                 res.extras = list(getattr(self.res, "extras", None) or RX.load_extras(lo.path/"extras", lo.meta.get("extras")))
                 res.trims = dict(getattr(self.res, "trims", None) or TRM.from_meta(lo.meta.get("trims")))
+                res.paints = dict(getattr(self.res, "paints", None) or TRM.paints_from_meta(lo.meta.get("paints")))
                 finalize_views(res)                              # re-apply the manual trims to the fresh cut
                 self.res = res; lo.chosen = res.chosen; self._align = res.align
                 lo.save(res); self.last_saved = datetime.datetime.now().strftime("%H:%M:%S")

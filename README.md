@@ -224,10 +224,15 @@ under a raised arm, the underwear edge beside the hip). TRIM lets you delete tho
 - Pick FRONT / SIDE / BACK and a part. Tools: **ERASE BRUSH**, **RESTORE BRUSH**, **ERASE INSIDE SHAPE**, **KEEP ONLY INSIDE SHAPE**
   (lasso: click points, click the first dot or double-click to close, right-click undoes a point).
 - The **live preview** shows the whole figure in NEUTRAL, ARMS UP or LEGS APART so you see exactly what the trim fixes.
+- **PAINT**: PAINT BRUSH and PAINT INSIDE SHAPE colour pixels instead of removing them (hair on an arm -> skin tone, a gap in a
+  torso). Choose the colour with the swatch, a chip from the character's own palette, or the EYEDROPPER (or hold Alt and click
+  any pixel). Painting works inside the part's own box, on empty pixels too. RESTORE brings the original pixel back.
 - Ctrl+Z / Ctrl+Y undo and redo, `[` and `]` change brush size, RESET THIS PART / RESET EVERYTHING bring pixels back.
 - Trims are **non-destructive**: stored in `meta.json` -> `trims` as offsets from each part's pivot, so they survive
   re-cutting. `parts/` holds the trimmed (final) PNGs, `parts_raw/` the untouched cuts. Tip: the CUT page's
-  *Overlap SIZE %* slider is the first lever if a crescent is large.
+  *Overlap SIZE %* slider is the first lever if a crescent is large. Painted pixels are saved in `meta.json` -> `paints`.
+- **Fill hidden areas** (cut settings) now also closes the gaps a covering arm leaves in a SIDE view: bands the arm hid across the
+  whole width of a part, and bites out of its edge. It applies the next time you press CUT.
 
 ## EXTRAS page - add parts (tails, ears, horns, wings, extra arms ...)
 
