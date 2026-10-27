@@ -4,3 +4,6 @@ loadouts/
 .venv/
 *.bak
 *.task
+
+humanrig_errors.log
+*.tmp

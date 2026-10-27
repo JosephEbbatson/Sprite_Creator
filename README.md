@@ -247,6 +247,10 @@ layer, motion). The assembled figures include the extras at rest.
 
 ## Troubleshooting
 
+- **Safety net (v3.1):** saves are written atomically and the previous copy is kept as `meta.json.bak` / `rig.json.bak`; a damaged
+  file is recovered from it automatically. Any error inside the app is shown in LOG and written to `humanrig_errors.log`
+  (send me that file if something breaks). Missing packages give a plain message instead of a traceback.
+
 | Problem | Fix |
 |---------|-----|
 | “No module named mediapipe” | `pip install mediapipe` (or use the fallback detector) |

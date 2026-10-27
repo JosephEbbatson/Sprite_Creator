@@ -1239,6 +1239,30 @@ def compose_views(res, solid=False, bones=False):
 # ----------------------------------------------------------------------------------------------
 PANEL_BG, PANEL_LINE = (14,18,28), (40,52,80)
 CELL_BG, CELL_LINE, BONE_COL = (26,34,52), (60,76,110), (70,120,210)
+
+VERSION = "3.1"
+
+def atomic_write_json(path, obj, **kw):
+    """Write JSON so a crash or a full disk can never leave a half-written file: write a temp file, keep the
+    previous copy as <name>.bak, then swap the new one in."""
+    path = Path(path); tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as f: json.dump(obj, f, **kw)
+    if path.exists():
+        try: shutil.copy2(path, path.with_name(path.name + ".bak"))
+        except Exception: pass
+    os.replace(tmp, path)
+
+def read_json_safe(path):
+    """Read JSON; if the file is damaged fall back to the .bak copy. Raises only if both are unreadable."""
+    path = Path(path)
+    try:
+        with open(path) as f: return json.load(f)
+    except Exception:
+        bak = path.with_name(path.name + ".bak")
+        if bak.exists():
+            with open(bak) as f: return json.load(f)
+        raise
+
 KIND_COL = dict(own=CELL_LINE, locked=(255,200,61), borrowed=(255,150,40), synth=(166,107,255), placeholder=(255,77,77))
 LABEL_H, CGAP = 7, 3
 
@@ -1435,7 +1459,7 @@ class Loadout:
         now = datetime.datetime.now().isoformat(timespec="seconds")
         if not self.meta.get("created"): self.meta["created"] = now
         self.meta["updated"] = now
-        with open(self.path/"meta.json","w") as f: json.dump(self.meta, f, indent=2)
+        atomic_write_json(self.path/"meta.json", self.meta, indent=2)
     def save(self, res=None):
         self.ensure_dirs()
         if res is not None:
@@ -1476,7 +1500,7 @@ class Loadout:
                        sheet=res.meta, assembled=res.asm_meta,
                        hierarchy={k: parent_key(k) for k in PART_KEYS}, alignment=getattr(res, "align", None) or {}, extras=ex_info,
                        rotation="degrees, clockwise positive, about each part's pivot")
-            with open(self.path/"rig.json","w") as f: json.dump(rig, f, indent=2)
+            atomic_write_json(self.path/"rig.json", rig, indent=2)
             if getattr(res, "cands_dirty", False): self.write_cands(res); res.cands_dirty = False
         self.write_meta()
     def write_cands(self, res):
@@ -1494,7 +1518,7 @@ class Loadout:
                         anc={ck: [float(x) for x in p] for ck, p in (c.get("anc") or {}).items()}))
                 index[v][k] = lst
         np.savez_compressed(self.path/"cands.npz", **arrays)
-        with open(self.path/"cands.json","w") as f: json.dump(index, f)
+        atomic_write_json(self.path/"cands.json", index)
     def load_cands(self):
         cj, cz = self.path/"cands.json", self.path/"cands.npz"
         cands = {v:{k:[] for k in PART_KEYS} for v in VIEWS}
@@ -1518,7 +1542,7 @@ class Loadout:
     def load(self):
         mp = self.path/"meta.json"
         if not mp.exists(): return False
-        with open(mp) as f: self.meta.update(json.load(f))
+        self.meta.update(read_json_safe(mp))
         for k0,dv in (("views",{}),("locks",{}),("rejects",{}),("settings",{}),("sources",[])):
             self.meta.setdefault(k0, dv)
         self.chosen = {v:{} for v in VIEWS}
@@ -1739,7 +1763,7 @@ def _build_gui_class(standalone=False):
             if standalone: tk.Tk.__init__(self)
             else: tk.Toplevel.__init__(self, app)
             self.app = app
-            self.title("HUMAN.RIG")
+            self.title(f"HUMAN.RIG {VERSION}")
             self.configure(bg=BG0)
             self.geometry("1560x940"); self.minsize(1280, 780)
             fams = set(tkfont.families(self))
@@ -1808,7 +1832,7 @@ def _build_gui_class(standalone=False):
             on = self.v_usemodel.get(); px = sum(m.px.values())
             self.chip_model.config(text=f"BODY MODEL   {m.organism.upper()} · {m.sex.upper()}   ({px:,} px learned){'' if on else '   OFF'}",
                                    fg=col if on else DIM, highlightbackground=col if on else LINE)
-            self.title(f"HUMAN.RIG  -  {m.organism}/{m.sex} model" + (f"  -  {self.loadout.name}" if self.loadout else ""))
+            self.title(f"HUMAN.RIG {VERSION}  -  {m.organism}/{m.sex} model" + (f"  -  {self.loadout.name}" if self.loadout else ""))
         def coach_state(self):
             lo = self.loadout; locks = sum(len(d) for d in self.locks.values())
             if lo is None: return ("1  START", "Create a character. Click NEW (top-left), type a name, then add your images.", "NEW", self.new_loadout)
@@ -2603,6 +2627,17 @@ def _build_gui_class(standalone=False):
             self.logbox.pack(fill="both", expand=True)
             for t,c in (("info",MUTED),("ok",GOOD),("warn",WARN),("err",BAD)): self.logbox.tag_config(t, foreground=c)
 
+        def report_callback_exception(self, exc, val, tb):
+            """Any error inside a button / key / timer lands here: shown in the LOG and written to humanrig_errors.log
+            instead of vanishing in a console window."""
+            txt = "".join(traceback.format_exception(exc, val, tb))
+            try:
+                with open(Path(__file__).resolve().parent/"humanrig_errors.log", "a") as f:
+                    f.write(f"--- {datetime.datetime.now().isoformat(timespec='seconds')}  v{VERSION}\n{txt}\n")
+            except Exception: pass
+            try: self.toast(f"Something went wrong ({exc.__name__}: {val}) - details in LOG / humanrig_errors.log", "err"); self.log(txt, "err")
+            except Exception: print(txt)
+
         def log(self, msg, kind="info"):
             ts = datetime.datetime.now().strftime("%H:%M:%S")
             self.logbox.config(state="normal"); self.logbox.insert("end", f"{ts}  {msg}\n", kind)
@@ -3161,7 +3196,19 @@ def __getattr__(name):
     if name == "RigWindow": return _build_gui_class()
     raise AttributeError(name)
 
+def _check_packages():
+    """Friendly message instead of a traceback when a package is missing."""
+    missing = []
+    for mod, pipname in (("numpy","numpy"),("PIL","pillow"),("scipy","scipy"),("tkinter",None)):
+        try: __import__(mod)
+        except Exception: missing.append(pipname or "tkinter (reinstall Python and tick 'tcl/tk')")
+    if missing:
+        print("HUMAN.RIG cannot start - missing: " + ", ".join(missing))
+        print("Fix with:  python -m pip install -r requirements.txt")
+        input("Press Enter to close..."); sys.exit(1)
+
 def main():
+    _check_packages()
     _build_gui_class(standalone=True)().mainloop()
 
 if __name__ == "__main__":
