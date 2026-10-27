@@ -27,6 +27,7 @@ import rig_extras as RX
 import rig_extras_gui as RXG
 import rig_trim as TRM
 import rig_trim_gui as TRG
+import rig_journey as RJ
 
 CM_PER_PX = 2.0
 SS = 3
@@ -2011,7 +2012,7 @@ def _build_gui_class(standalone=False):
             self.build_editor(self.pages["editor"]); self.build_sheet_page(self.pages["sheet"])
             self.build_asm_page(self.pages["asm"]); self.build_pose(self.pages["pose"])
             self.build_guide(self.pages["guide"]); self.build_log(self.pages["log"])
-            self.build_align(self.pages["align"]); self.build_anim(self.pages["anim"]); self.build_extras(self.pages["extras"]); self.build_trim(self.pages["trim"])
+            self.build_align(self.pages["align"]); self.build_anim(self.pages["anim"]); self.build_extras(self.pages["extras"]); self.build_trim(self.pages["trim"]); self.build_journey(main)
 
             bar = tk.Frame(self, bg=BG1, highlightthickness=1, highlightbackground=LINE); bar.pack(fill="x", padx=10, pady=(4,8))
             self.status = tk.Label(bar, text="", bg=BG1, fg=ACC, font=self.F["ui"], anchor="w")
@@ -2130,6 +2131,7 @@ def _build_gui_class(standalone=False):
             if key == "anim": self.after(30, self.anim_refresh)
             if key == "extras": self.after(30, self.extras_refresh)
             if key == "trim": self.after(30, self.trim_refresh)
+            self.journey_update(key)
 
         # ------------------------------------------------------------------ editor page
         def build_editor(self, page):
@@ -3181,7 +3183,7 @@ def _build_gui_class(standalone=False):
                 if i == cur: l.config(bg=ACC, fg="#001a20", text=f"{i+1}  {STAGE[i]}")
                 elif done[i]: l.config(bg=BG2, fg=GOOD, text=f"✓  {STAGE[i]}")
                 else: l.config(bg=BG2, fg=DIM, text=f"{i+1}  {STAGE[i]}")
-            self.update_coach(); self.refresh_save_chip()
+            self.update_coach(); self.refresh_save_chip(); self.journey_update()
 
     RGX.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
                                          ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
@@ -3189,6 +3191,8 @@ def _build_gui_class(standalone=False):
                                            ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
     TRG.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
                                            ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
+    RJ.install(RigWindow, globals(), dict(BG0=BG0, BG1=BG1, BG2=BG2, BG3=BG3, LINE=LINE, LINE2=LINE2, TEXT=TEXT, MUTED=MUTED, DIM=DIM,
+                                          ACC=ACC, PINK=PINK, GOLD=GOLD, GOOD=GOOD, WARN=WARN, BAD=BAD), tk, ttk, ImageTk, filedialog, messagebox)
     _GUI_CACHE[standalone] = RigWindow
     return RigWindow
 

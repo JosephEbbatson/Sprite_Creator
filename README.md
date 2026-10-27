@@ -28,6 +28,7 @@ rig_motion.py         preset actions + secondary motion
 rig_tools.py          hidden-area fill, hole repair, rig health check
 rig_extras.py         EXTRA PARTS: cut / copy / mirror / motion (no GUI)
 rig_extras_gui.py     the EXTRAS page
+rig_journey.py        GUIDED mode: numbered steps, BACK / NEXT, MORE menu
 rig_trim.py           TRIM: erase / restore single pixels of finished parts (no GUI)
 rig_trim_gui.py       the TRIM page
 requirements.txt      Python packages
@@ -195,6 +196,14 @@ Scale changes both **length** and **thickness** of that region on the next CUT.
 **RESET BODY** restores full human + normal proportions.
 
 Settings are saved inside the loadout (`meta.json` → `mask` + `scale`) and survive re-opening.
+
+## GUIDED mode (default)
+
+The tab bar shows only the main path, in order: **1 CHECK, 2 REVIEW, 3 CLEAN UP, 4 ADD PARTS, 5 ANIMATE**
+(3 and 4 are optional and say so). A strip under each page explains what the step is for and has **BACK / NEXT**; NEXT also
+does the obvious action (ANALYSE, CUT, and SAVE & EXPORT on the last step). Less-used pages (ASSEMBLED, POSE, PICK PARTS,
+ALIGN, LOG) are under **MORE**. Click the label at the right of the tab bar to switch to ALL TABS and back; the choice is
+remembered in `humanrig_prefs.json`.
 
 ## TRIM page - fine-tune finished parts (white crescents under raised arms, hips ...)
 
