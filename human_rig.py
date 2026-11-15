@@ -29,13 +29,14 @@ import rig_trim as TRM
 import rig_trim_gui as TRG
 import rig_journey as RJ
 import rig_sheet_import_gui as SIG
+import rig_game_export as RGE
 
 CM_PER_PX = 2.0
 SS = 3
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
 MAX_SRC_S = 3.5
 MAX_GIF_FRAMES = 30
-LOADOUTS_DIR = Path("loadouts")
+LOADOUTS_DIR = Path(__file__).resolve().parent / "loadouts"   # beside this file, whatever folder it was started from (the game finds characters here)
 VIEWS = ("front", "side", "back")
 MIN_SCORE = 0.05
 KEEP_CANDS = 14
@@ -2922,7 +2923,15 @@ def _build_gui_class(standalone=False):
                 self.align_learn(); lo = self.ensure_loadout(); lo.chosen = self.res.chosen; self.res.cands_dirty = True; lo.save(self.res)
             except Exception: return self.toast("Export failed - see LOG.", "err") or self.log(traceback.format_exc(), "err")
             self.exported = True; self.last_saved = datetime.datetime.now().strftime("%H:%M:%S"); self.update_stage()
-            self.toast(f"Exported to {lo.path.resolve()}  (rig.png, atlas.png, rig.json, assembled_*.png, parts/)", "ok")
+            game_note = ""
+            try:                                           # the LIFEX-100 game package: game/sheet.png + game/rig.json
+                gi = RGE.export_game_package(globals(), self.res, lo.path/"game", lo.name)
+                game_note = "  + game/ (ready to pick in LIFEX-100)"
+                for w in gi["warnings"]: self.log("game export: " + w, "warn")
+            except Exception:
+                self.log("game export failed (the normal export above is fine):\n" + traceback.format_exc(), "err")
+                game_note = "  (game/ package FAILED - see LOG)"
+            self.toast(f"Exported to {lo.path.resolve()}  (rig.png, atlas.png, rig.json, assembled_*.png, parts/){game_note}", "ok")
 
         # ------------------------------------------------------------------ frames list / rescue
         def fmt_frame(self, fd):
