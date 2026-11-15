@@ -33,6 +33,11 @@ rig_sheet_import_gui.py  the IMPORT SHEET button
 rig_journey.py        GUIDED mode: numbered steps, BACK / NEXT, MORE menu
 rig_trim.py           TRIM: erase / restore single pixels of finished parts (no GUI)
 rig_trim_gui.py       the TRIM page
+rig_game_export.py    turns a finished loadout into a LIFEX-100 game package (sheet.png + rig.json)
+export_to_game.py     command that exports sprites you ALREADY saved (no window)
+Export_To_Game.bat    double-click version of export_to_game.py (Windows)
+apply_game_export_patch.py  one-shot: makes SAVE & EXPORT write the game package too
+test_game_export.py   test for the exporter (ends ALL PASS)
 requirements.txt      Python packages
 README.md             this file
 ```
@@ -269,6 +274,22 @@ layer, motion). The assembled figures include the extras at rest.
 - Extra spine / neck vertebrae
 - Non-human default masks (dog, bird, plant ...)
 - Extras in the exploded RIG SHEET / atlas (they are exported as separate PNGs for now)
+
+## Bring a saved sprite into LIFEX-100 (no re-making it)
+
+The game draws the player from `loadouts/<name>/game/` (`sheet.png` + `rig.json`). Sprites you saved earlier don't have that
+folder yet. To add it to your desktop copy, put `rig_game_export.py`, `export_to_game.py`, `Export_To_Game.bat` and
+`apply_game_export_patch.py` next to `human_rig.py`, then:
+
+1. **Export what you already have** - double-click `Export_To_Game.bat` (every saved sprite), drag one sprite's folder onto it
+   (just that one), or from a command window:
+   `python export_to_game.py hero --game "C:\path\to\lifex-100"` - this also copies the result into the game project
+   (`--zip` makes `hero_game.zip` instead, to unzip inside the game's `Tools/SpriteCreator`).
+2. **Make it automatic from now on** (optional) - run `python apply_game_export_patch.py` once. SAVE & EXPORT then writes
+   `game/` for you. It keeps a backup of `human_rig.py` and changes nothing if your file looks different.
+
+Only the FRONT view and the 17 base parts go to the game for now (extras, side and back views are not exported yet). A sprite
+that was never cut is refused with a message instead of exporting placeholders. Check with `python test_game_export.py`.
 
 ## Troubleshooting
 
